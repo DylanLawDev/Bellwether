@@ -63,6 +63,18 @@ def test_ingest_batch_isolates_records():
     assert statuses == ["created", "duplicate", "created"]
 
 
+@requires_gcs
+def test_ingest_batch_isolates_invalid_record():
+    # A malformed record in the middle must not fail the whole batch: it is
+    # reported as "error" while the valid records on either side still ingest.
+    body = {"records": [_rec("api-b1"), {"kind": "weird"}, _rec("api-b2")]}
+    res = client.post("/ingest/batch", json=body)
+    assert res.status_code == 200
+    out = res.json()["results"]
+    assert [r["status"] for r in out] == ["created", "error", "created"]
+    assert out[1]["error"] and out[1]["raw_record_id"] is None
+
+
 def test_ingest_validation_error_is_422():
     bad = _rec("api-x")
     bad["kind"] = "weird"

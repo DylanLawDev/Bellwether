@@ -33,6 +33,11 @@ class Submission(BaseModel):
 
 
 class IngestResult(BaseModel):
-    raw_record_id: int
-    status: Literal["created", "duplicate", "unroutable"]
-    payload_uri: str
+    # raw_record_id/payload_uri are populated for records that reached the index
+    # (created/duplicate/unroutable). They are None for "error" results, which a
+    # batch produces when a single record fails validation and is isolated rather
+    # than failing the whole batch; `error` then carries the validation message.
+    raw_record_id: int | None = None
+    status: Literal["created", "duplicate", "unroutable", "error"]
+    payload_uri: str | None = None
+    error: str | None = None
