@@ -1,5 +1,6 @@
-.PHONY: dev up down check test lint fmt migrate
+.PHONY: dev up down check test lint fmt migrate ui
 dev:    ; uv sync
+ui:     ; uv run --group ui streamlit run src/bellweather/web/app.py
 up:     ; docker compose up -d
 down:   ; docker compose down -v
 lint:   ; uv run ruff check .
