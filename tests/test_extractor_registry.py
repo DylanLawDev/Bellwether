@@ -1,4 +1,19 @@
-from bellweather.extractors import ExtractedTag, register, get_extractor, known_content_types
+import pytest
+from bellweather.extractors import (
+    ExtractedTag,
+    register,
+    get_extractor,
+    known_content_types,
+    _REGISTRY,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_registry():
+    snapshot = dict(_REGISTRY)
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(snapshot)
 
 
 class _Fake:
@@ -13,7 +28,8 @@ def test_register_and_lookup():
     ex = get_extractor("fake-v1")
     assert ex is not None
     tags = ex.extract({"payload": {"t": "ECON"}})
-    assert tags[0].raw_value == "ECON" and "fake-v1" in known_content_types()
+    assert tags[0].raw_value == "ECON"
+    assert "fake-v1" in known_content_types()
 
 
 def test_unknown_returns_none():
