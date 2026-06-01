@@ -18,7 +18,37 @@ env:
   SERVICE: bellweather-api
   JOB: bellweather-worker
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env: { POSTGRES_USER: bellweather, POSTGRES_PASSWORD: bellweather, POSTGRES_DB: bellweather }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bellweather" --health-interval 2s
+          --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://bellweather:bellweather@localhost:5432/bellweather
+      BELLWEATHER_BUCKET: bellweather-bronze-ci
+      STORAGE_EMULATOR_HOST: http://localhost:4443
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Start fake GCS server
+        run: |
+          docker run -d --name fake-gcs -p 4443:4443 fsouza/fake-gcs-server:1.49 \
+            -scheme http -port 4443 -public-host localhost:4443
+          for i in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/localhost/4443) 2>/dev/null; then echo "fake-gcs up"; exec 3>&-; break; fi
+            sleep 1
+          done
+      - run: uv sync
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run pytest
+
   deploy:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +73,6 @@ jobs:
           gcloud run jobs deploy bellweather-migrate \
             --image "$IMAGE" --region "$REGION" \
             --service-account "${{ secrets.GCP_RUNTIME_SA }}" \
-            --set-cloudsql-instances "${{ secrets.GCP_SQL_CONN }}" \
             --set-secrets DATABASE_URL=bellweather-database-url:latest \
             --set-env-vars BELLWEATHER_BUCKET=${{ secrets.GCP_BUCKET }},BELLWEATHER_OBS_BUCKET=hour \
             --command bellweather --args migrate --quiet
