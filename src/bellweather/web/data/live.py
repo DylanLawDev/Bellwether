@@ -1,26 +1,61 @@
-"""Live backend STUB — the "endpoints after" half of the seam.
+"""Live backend — the "endpoints after" half of the seam.
 
-Each function will issue an httpx call to a real Bellwether read-endpoint
-(``GET /api/...``) and assemble the same DataFrame/dict shapes the mock backend
-returns (see ``bellweather.web.data.source`` for the column/key contract). Filling these in,
-together with the matching FastAPI endpoints, is future work; the screens do not
-change when it lands — only ``BELLWEATHER_UI_SOURCE`` flips from ``mock`` to ``live``.
+Each function issues an httpx call to a Bellwether read-endpoint
+(``GET /api/...``, see ``bellweather.reads`` / the ``/api`` router) and assembles
+the **same** DataFrame/dict shapes the mock backend returns (column/key contract
+in ``bellweather.web.data.source``). Signatures are kept byte-identical to
+``mock.py`` so the screens never know which backend is active — only
+``BELLWEATHER_UI_SOURCE`` flips from ``mock`` to ``live``.
 """
 
 from __future__ import annotations
 
-_MSG = (
-    "Live data backend is not implemented yet. Run with BELLWEATHER_UI_SOURCE=mock "
-    "(the default) until the read-endpoints exist."
-)
+from datetime import datetime
+
+import httpx
+import pandas as pd
+
+from bellweather.config import get_ui_settings
+from bellweather.web.data import source as contract
+
+_TIMEOUT = 30.0
 
 
-def get_tracked_symbols():
-    raise NotImplementedError(_MSG)
+def _get(path: str, **params) -> object:
+    """GET ``{bellweather_api_url}{path}`` with ``params`` and return parsed JSON.
+
+    ``None`` params are dropped; ``datetime`` params are sent as ISO-8601. The
+    base URL is read at call time (not import) so tests can repoint it. Uses
+    UISettings (not the full pipeline Settings) so a client-only UI environment
+    needs no DB/GCS secrets to reach a remote API.
+    """
+    clean: dict = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        clean[key] = value.isoformat() if isinstance(value, datetime) else value
+    base = get_ui_settings().bellweather_api_url
+    with httpx.Client(base_url=base, timeout=_TIMEOUT) as client:
+        resp = client.get(path, params=clean)
+        resp.raise_for_status()
+        return resp.json()
 
 
-def get_observations(keys, start=None, end=None):
-    raise NotImplementedError(_MSG)
+def _frame(rows, columns, ts_cols=()):
+    df = pd.DataFrame(rows, columns=columns)
+    for col in ts_cols:
+        if not df.empty:
+            df[col] = pd.to_datetime(df[col])
+    return df
+
+
+def get_tracked_symbols() -> pd.DataFrame:
+    return _frame(_get("/api/symbols"), contract.TRACKED_SYMBOL_COLUMNS)
+
+
+def get_observations(keys, start=None, end=None) -> pd.DataFrame:
+    rows = _get("/api/observations", keys=list(keys), start=start, end=end)
+    return _frame(rows, contract.OBSERVATION_COLUMNS, ts_cols=("ts_bucket",))
 
 
 def query_raw_records(
@@ -32,25 +67,50 @@ def query_raw_records(
     end=None,
     limit=100,
     offset=0,
-):
-    raise NotImplementedError(_MSG)
+) -> pd.DataFrame:
+    rows = _get(
+        "/api/records",
+        source=source,
+        content_type=content_type,
+        status=status,
+        search=search,
+        start=start,
+        end=end,
+        limit=limit,
+        offset=offset,
+    )
+    return _frame(rows, contract.RAW_RECORD_COLUMNS, ts_cols=("fetched_at",))
 
 
-def query_tags(tag_type=None, search=None, start=None, end=None, limit=100, offset=0):
-    raise NotImplementedError(_MSG)
+def query_tags(
+    tag_type=None, search=None, start=None, end=None, limit=100, offset=0
+) -> pd.DataFrame:
+    rows = _get(
+        "/api/tags",
+        tag_type=tag_type,
+        search=search,
+        start=start,
+        end=end,
+        limit=limit,
+        offset=offset,
+    )
+    return _frame(rows, contract.TAG_COLUMNS, ts_cols=("observed_at",))
 
 
-def get_queue_stats():
-    raise NotImplementedError(_MSG)
+def get_queue_stats() -> dict:
+    return _get("/api/queue")
 
 
-def get_worker_runs():
-    raise NotImplementedError(_MSG)
+def get_worker_runs() -> pd.DataFrame:
+    # No backing worker_runs table in the schema yet (deferred — would need a
+    # small migration; see T15). Return an empty, correctly-shaped frame so the
+    # Pipeline screen renders queue + ingestion-rate without a worker-run history.
+    return pd.DataFrame(columns=contract.WORKER_RUN_COLUMNS)
 
 
-def get_ingestion_rate():
-    raise NotImplementedError(_MSG)
+def get_ingestion_rate() -> pd.DataFrame:
+    return _frame(_get("/api/ingestion-rate"), contract.INGESTION_RATE_COLUMNS, ts_cols=("hour",))
 
 
-def get_settings_view():
-    raise NotImplementedError(_MSG)
+def get_settings_view() -> list[dict]:
+    return _get("/api/config")
