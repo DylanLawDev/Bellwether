@@ -17,7 +17,9 @@ dependencies = [
 # pandas is here (not just `ui`) because the UI data/analysis tests import it.
 dev = ["pytest>=8.3", "ruff>=0.7", "pytest-httpserver>=1.1", "pandas>=2.2"]
 # Streamlit is the local-prototype-only runtime; not a dependency of the pipeline.
-ui = ["streamlit>=1.39", "pandas>=2.2"]
+# >=1.58: the pages use the width="stretch" API (st.dataframe/st.altair_chart), which
+# older releases (e.g. 1.39) don't accept — pinning to the version we validate against.
+ui = ["streamlit>=1.58", "pandas>=2.2"]
 
 [project.scripts]
 bellweather = "bellweather.cli:app"

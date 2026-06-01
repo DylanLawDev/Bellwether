@@ -89,7 +89,8 @@ Deterministic (seeded) so the prototype looks identical on every launch:
   `org:federal reserve`, `location:Ukraine`, etc.; `kind='coverage'`.
 - **Observations**: ~14 days of hourly buckets per symbol with a couple of injected
   spikes so anomaly flags have something to catch.
-- **Raw records**: `source='gdelt'`, `kind='unstructured'`, `content_type='gdelt.gkg'`.
+- **Raw records**: `source='gdelt.gkg'`, `kind='unstructured'`, `content_type='gdelt-gkg-v2'`
+  (the values the real producer/extractor write, so live mode shows the same rows).
 - **Tags**: `tag_type ∈ {theme, person, org, location, tone}`.
 - **Queue stats / worker runs / ingestion rate**: representative operational numbers.
 

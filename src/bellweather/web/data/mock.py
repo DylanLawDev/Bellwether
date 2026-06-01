@@ -36,6 +36,11 @@ _SYMBOLS = [
 # anomaly flag something real to catch.
 _SPIKES = [(0, 72, 6.0), (2, 18, 7.0), (6, 120, 4.5)]
 
+# Match what the real GDELT path writes (producers/gdelt + GdeltGkgExtractor), so the
+# prototype exercises the same source/content_type the live read API would return.
+_SOURCE = "gdelt.gkg"
+_CONTENT_TYPE = "gdelt-gkg-v2"
+
 
 def _now_hour() -> datetime:
     return datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
@@ -96,9 +101,9 @@ def _build():
         rec_rows.append(
             {
                 "id": i,
-                "source": "gdelt",
+                "source": _SOURCE,
                 "kind": "unstructured",
-                "content_type": "gdelt.gkg",
+                "content_type": _CONTENT_TYPE,
                 "idempotency_key": f"gkg:{stamp}:{i:04d}",
                 "status": statuses[i - 1],
                 "fetched_at": fetched,
@@ -126,7 +131,7 @@ def _build():
             {
                 "id": i,
                 "raw_record_id": int(rng.integers(1, n_records + 1)),
-                "source": "gdelt",
+                "source": _SOURCE,
                 "tag_type": tag_type,
                 "raw_value": raw_value,
                 "observed_at": observed,
@@ -208,7 +213,9 @@ def query_raw_records(
     if status:
         df = df[df["status"] == status]
     if search:
-        df = df[df["idempotency_key"].str.contains(search, case=False, na=False)]
+        # regex=False: the UI labels this substring search, so metachars are literal
+        # (a "[" must not crash; "." must not match any char).
+        df = df[df["idempotency_key"].str.contains(search, case=False, na=False, regex=False)]
     if start is not None:
         df = df[df["fetched_at"] >= start]
     if end is not None:
@@ -223,7 +230,7 @@ def query_tags(
     if tag_type:
         df = df[df["tag_type"] == tag_type]
     if search:
-        df = df[df["raw_value"].str.contains(search, case=False, na=False)]
+        df = df[df["raw_value"].str.contains(search, case=False, na=False, regex=False)]
     if start is not None:
         df = df[df["observed_at"] >= start]
     if end is not None:

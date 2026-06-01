@@ -1,5 +1,7 @@
 """Explorer — query raw records, tags, and observations."""
 
+import json
+
 import streamlit as st
 
 from bellweather.web import data
@@ -12,9 +14,13 @@ records_tab, tags_tab, obs_tab = st.tabs(["Raw records", "Tags", "Observations"]
 PAGE_SIZE = 50
 
 with records_tab:
+    # Content types are data-driven (from the records themselves) so the filter never
+    # drifts from what the live read API actually returns. Status is the fixed
+    # raw_records.status enum from the schema CHECK constraint.
+    content_types = sorted(data.query_raw_records(limit=1000)["content_type"].unique())
     c1, c2, c3 = st.columns(3)
     status = c1.selectbox("Status", ["(any)", "received", "processed", "unroutable", "failed"])
-    content_type = c2.selectbox("Content type", ["(any)", "gdelt.gkg"])
+    content_type = c2.selectbox("Content type", ["(any)", *content_types])
     search = c3.text_input("Idempotency key contains")
     page = st.number_input("Page", min_value=1, value=1, step=1, key="rec_page")
     df = data.query_raw_records(
@@ -29,7 +35,12 @@ with records_tab:
     if not df.empty:
         with st.expander("Row detail"):
             row = st.selectbox("Record id", df["id"].tolist())
-            st.json(df[df["id"] == row].iloc[0].to_dict(), expanded=True)
+            # Round-trip through pandas to_json so timestamps/numpy scalars become
+            # JSON-native (st.json can't serialize a raw pandas Timestamp).
+            detail = json.loads(
+                df[df["id"] == row].iloc[[0]].to_json(orient="records", date_format="iso")
+            )[0]
+            st.json(detail, expanded=True)
 
 with tags_tab:
     c1, c2 = st.columns(2)

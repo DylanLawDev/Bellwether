@@ -58,9 +58,24 @@ def test_raw_records_search_and_content_type_filters():
     assert not hits.empty
     assert hits["idempotency_key"].str.contains(needle, case=False).all()
     assert (
-        mock.query_raw_records(content_type="gdelt.gkg", limit=1000).shape[0] == all_rows.shape[0]
+        mock.query_raw_records(content_type="gdelt-gkg-v2", limit=1000).shape[0]
+        == all_rows.shape[0]
     )
     assert mock.query_raw_records(content_type="nope", limit=1000).empty
+
+
+def test_records_use_the_real_gdelt_identifiers():
+    # Must mirror producers/gdelt + GdeltGkgExtractor so live mode shows the same rows.
+    df = mock.query_raw_records(limit=1000)
+    assert (df["content_type"] == "gdelt-gkg-v2").all()
+    assert (df["source"] == "gdelt.gkg").all()
+
+
+def test_search_is_literal_not_regex():
+    # Regex metacharacters must be treated literally — never crash, never over-match.
+    assert mock.query_raw_records(search="[", limit=1000).empty
+    assert mock.query_tags(search="[", limit=1000).empty
+    assert mock.query_raw_records(search="zzz.zzz", limit=1000).empty
 
 
 def test_tags_shape():
