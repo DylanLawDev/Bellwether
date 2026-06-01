@@ -1,0 +1,29 @@
+#!/bin/bash
+set -euo pipefail
+
+# --- toolchain: uv manages the Python 3.12 toolchain ---
+command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+
+echo "setup: starting in '$PWD' as '$(whoami)'"
+
+# The repo IS cloned before this script runs, but not into $PWD. Find it by its
+# pyproject.toml. Guarded with '|| true' so a missing search root or a SIGPIPE
+# from 'head' can't trip 'set -e' / 'pipefail' (that was the previous failure).
+repo="$(find /home /root /workspace /repo /srv /opt -maxdepth 5 -name pyproject.toml 2>/dev/null | head -n1 || true)"
+repo="$(dirname "$repo" 2>/dev/null || true)"
+
+if [ -z "$repo" ] || [ ! -f "$repo/pyproject.toml" ]; then
+  echo "setup: could not find pyproject.toml. Tree under /home:" >&2
+  find /home -maxdepth 3 2>/dev/null | head -50 >&2
+  exit 1
+fi
+
+echo "setup: using repo at '$repo'"
+cd "$repo"
+
+# --- deps: dev group (lint/test/pandas) + optional UI group (streamlit) ---
+uv sync --group ui
+
+# --- pre-pull service images (non-fatal: don't block session start if Docker is absent) ---
+docker compose pull || echo "setup: 'docker compose pull' skipped (docker unavailable or no daemon)"
