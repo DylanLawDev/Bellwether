@@ -142,6 +142,13 @@ flowchart LR
 8. **Orchestration** (cross-cutting) — schedules and wires the stages together
    with retries, lineage, and data-quality checks.
 
+**Operator/research surface.** A front end sits on top of the research and gold
+layers for humans: viewing and querying records/tags/observations, watching
+pipeline health, and reviewing configuration. A **Streamlit web UI** is packaged
+with the backend at `src/bellweather/web/` (run `make ui`), today on mock data
+behind a swappable data-access seam, so it can be repointed at real read-endpoints
+later without rewriting the screens.
+
 ---
 
 ## 5. Initial Scope & Sequencing
