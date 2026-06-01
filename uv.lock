@@ -117,7 +117,7 @@ dev = [
 ]
 ui = [
     { name = "pandas", specifier = ">=2.2" },
-    { name = "streamlit", specifier = ">=1.39" },
+    { name = "streamlit", specifier = ">=1.58" },
 ]
 
 [[package]]
