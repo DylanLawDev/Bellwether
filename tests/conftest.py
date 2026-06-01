@@ -3,6 +3,19 @@ import socket
 
 import pytest
 
+from bellweather.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings_cache():
+    # get_settings() is a process-wide @lru_cache. Reset it around every test so a
+    # test that monkeypatches the environment can never leak a stale Settings (e.g.
+    # a throwaway DATABASE_URL) into a later test. Defense-in-depth alongside the
+    # explicit fixture in test_config.py.
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
 
 def _gcs_reachable() -> bool:
     host = os.environ.get("STORAGE_EMULATOR_HOST")
