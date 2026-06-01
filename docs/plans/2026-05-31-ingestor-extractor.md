@@ -8,16 +8,16 @@
 
 **Tech Stack:** Python 3.12, `uv`, FastAPI, `psycopg` v3 (sync) + `psycopg_pool`, `google-cloud-storage`, `pydantic` v2, `httpx`, `pytest` + `ruff`. Local dev via docker-compose (Postgres + fake-gcs-server). Deploy: Terraform → GCS + Cloud SQL (Postgres) + Cloud Run (service + job) + Cloud Scheduler + Artifact Registry. CI/CD: GitHub Actions.
 
-**Spec:** `docs/superpowers/specs/2026-05-31-ingestor-extractor-design.md`. **Platform doc:** `README.md`.
+**Spec:** `docs/specs/2026-05-31-ingestor-extractor-design.md`. **Platform doc:** `README.md`.
 
 ---
 
 ## How to run a ticket from your phone (web Claude Code)
 
-Each ticket under `docs/superpowers/plans/tickets/` is **self-contained**: it names the spec, prerequisite tickets, exact files, interfaces, tests, and acceptance criteria. To dispatch one:
+Each ticket under `docs/plans/tickets/` is **self-contained**: it names the spec, prerequisite tickets, exact files, interfaces, tests, and acceptance criteria. To dispatch one:
 
 1. Open the repo in Claude Code on the web.
-2. Tell it: *"Read `AGENTS.md`, then implement ticket `docs/superpowers/plans/tickets/T03-bronze-store.md` end to end: work on a branch, follow TDD, run `make check`, and open a PR. Do not merge."*
+2. Tell it: *"Read `AGENTS.md`, then implement ticket `docs/plans/tickets/T03-bronze-store.md` end to end: work on a branch, follow TDD, run `make check`, and open a PR. Do not merge."*
 3. CI (GitHub Actions) runs `make check` on the PR. Review the diff + CI result from your phone and merge.
 
 **Conventions (also in `AGENTS.md`, created in T00) that every ticket relies on:**
