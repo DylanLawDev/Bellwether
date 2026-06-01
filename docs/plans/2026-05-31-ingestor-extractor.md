@@ -60,7 +60,12 @@ bellweather/
 │   │   └── gdelt_gkg.py      # GdeltGkgExtractor                      [T10]
 │   ├── worker.py             # lease loop, process_job()             [T11]
 │   ├── gold.py               # aggregate_observations()              [T11]
-│   └── cli.py                # `bellweather` entry (api/worker/...)   [T07/T11]
+│   ├── cli.py                # `bellweather` entry (api/worker/ui)    [T07/T11/T16]
+│   └── web/                  # Streamlit operator/research UI (packaged)
+│       ├── app.py            # entrypoint + overview                 [UI prototype]
+│       ├── pages/            # Dashboard, Explorer, Pipeline, Settings
+│       ├── data/             # source (contract) + mock + live backends [mock; live=T16]
+│       └── analysis.py       # pure helpers (anomaly flag)
 ├── producers/gdelt/          # reference external producer           [T12-prod]
 └── tests/                    # mirrors src/, plus tests/fixtures/
 ```
@@ -78,6 +83,9 @@ T00 scaffold ─┬─▶ T01 config/db ─┬─▶ T02 migrations ─┬─▶
               │
               └─▶ T13 terraform/GCP infra  (INDEPENDENT — can be done anytime, in parallel)
                   └─▶ T14 CI/CD deploy wiring (needs T13 + a runnable image from T07/T11)
+
+  Web UI track (prototype already on a branch; mock data, packaged at src/bellweather/web/):
+  T07 api + T11 worker ─▶ T15 read API ─▶ T16 web live backend ─▶ T17 single-app deploy (needs T14)
 ```
 
 **Recommended sequence:** T00 → T01 → T02 → (T03, T04 in parallel) → T05 → T06 → T07 → T08 → (T09 → T10) → T11 → T12. Run **T13 (Terraform)** early/in-parallel since it's independent — it's the "plug into GCP" piece you asked for. T14 wires deploy once an image exists.
@@ -105,6 +113,9 @@ T00 scaffold ─┬─▶ T01 config/db ─┬─▶ T02 migrations ─┬─▶
 | [T12](tickets/T12-gdelt-producer.md) | Reference GDELT producer (external script) | T08, T11 |
 | [T13](tickets/T13-terraform-gcp.md) | Terraform: GCS + Cloud SQL + Cloud Run + Scheduler | — (parallel) |
 | [T14](tickets/T14-cicd-deploy.md) | Dockerfile + GitHub Actions build/deploy | T07, T11, T13 |
+| [T15](tickets/T15-read-api.md) | Read API: GET endpoints for symbols/observations/records/tags/queue | T07, T11 |
+| [T16](tickets/T16-web-live-backend.md) | Wire `web.data.live` to the read API + `bellweather ui` CLI | T15 |
+| [T17](tickets/T17-single-app-deploy.md) | Package API + UI as one Cloud Run app | T14, T16 |
 
 ---
 
