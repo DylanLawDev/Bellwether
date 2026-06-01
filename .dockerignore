@@ -1,3 +1,5 @@
+# NOTE (T17): the combined image needs src/bellweather/web/** (the Streamlit UI),
+# Caddyfile, and deploy/entrypoint.sh — none are ignored here on purpose.
 tests/
 infra/
 docs/

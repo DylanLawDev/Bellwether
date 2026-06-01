@@ -5,10 +5,37 @@ One `terraform apply` stands up the whole GCP baseline:
 - a **GCS bronze bucket** (versioned, uniform access) for immutable raw bytes,
 - a **Cloud SQL Postgres** instance (`db-f1-micro`) — the transactional spine,
 - an **Artifact Registry** Docker repo,
-- the **ingestion API** on a Cloud Run service (`bellweather api`),
+- the **combined UI + API** on a single Cloud Run service (see below),
 - the **worker** as a Cloud Run Job (`bellweather worker --once`),
 - a **Cloud Scheduler** trigger that runs the worker job every minute to drain the queue,
 - a runtime **service account** + IAM, and a **Secret Manager** secret holding `DATABASE_URL`.
+
+## The combined Cloud Run service (T17)
+
+The `bellweather-api` service is **one image serving two halves** behind one
+public URL. Cloud Run hands the container a single ingress port (`$PORT`, 8080),
+so the image runs three processes supervised by `deploy/entrypoint.sh`:
+
+| process    | bind              | role                                   |
+| ---------- | ----------------- | -------------------------------------- |
+| uvicorn    | `127.0.0.1:8000`  | FastAPI — ingestion + read API + docs  |
+| streamlit  | `127.0.0.1:8501`  | operator/research UI                   |
+| **caddy**  | `0.0.0.0:$PORT`   | reverse proxy (the only public listener) |
+
+`Caddyfile` routes `/api/*`, `/healthz`, `/ingest`, `/docs`, `/openapi.json`
+→ FastAPI; **everything else** (the root page + the `/_stcore/*` websocket that
+keeps Streamlit interactive) → Streamlit. The UI runs `BELLWEATHER_UI_SOURCE=live`
+and reaches the API in-process at `BELLWEATHER_API_URL=http://127.0.0.1:8000`
+(set on the service in `main.tf`) — no hop back out through the public URL.
+
+If any of the three processes dies, the supervisor exits non-zero and Cloud Run
+recycles the revision. Memory is bumped to **1Gi** (from the 512Mi default) for
+Streamlit's headroom; the service still scales to zero, so cost stays in-envelope.
+
+**The worker is unchanged.** It remains its **own Cloud Run Job** running
+`bellweather worker --once` — the Job overrides the container `command`, so it
+bypasses the supervisor entrypoint and never starts Caddy/Streamlit. The migrate
+Job (in CI) does the same with `bellweather migrate`.
 
 ## Prerequisites
 

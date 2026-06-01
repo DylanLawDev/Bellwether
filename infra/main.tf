@@ -141,11 +141,23 @@ resource "google_cloud_run_v2_service" "api" {
     }
     containers {
       image = var.image
-      # No command override: rely on the image's ENTRYPOINT/CMD (`bellweather api --port 8080`).
-      # This lets the placeholder `hello` image keep its own entrypoint so the first
-      # `terraform apply` produces a Ready revision before T14's real image exists.
+      # No command override: rely on the image's ENTRYPOINT (the T17 supervisor,
+      # which runs uvicorn + Streamlit + Caddy). Caddy binds Cloud Run's $PORT
+      # (= container_port below) and reverse-proxies /api/*, /healthz, /ingest,
+      # and /docs to FastAPI; everything else to the Streamlit UI. Leaving the
+      # command unset also lets the placeholder `hello` image keep its own
+      # entrypoint, so the first `terraform apply` is Ready before CI's real image.
       ports {
         container_port = 8080
+      }
+      # Streamlit pushes the combined image's footprint past the 512Mi default;
+      # 1Gi keeps headroom. Cost stays in-envelope — the service scales to zero,
+      # so memory is billed only while actually serving a request.
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "1Gi"
+        }
       }
       volume_mounts {
         name       = "cloudsql"
@@ -157,6 +169,16 @@ resource "google_cloud_run_v2_service" "api" {
           name  = env.key
           value = env.value
         }
+      }
+      # Serve the operator UI from this same service, talking to the in-process
+      # API over localhost (not back out through the public URL).
+      env {
+        name  = "BELLWEATHER_UI_SOURCE"
+        value = "live"
+      }
+      env {
+        name  = "BELLWEATHER_API_URL"
+        value = "http://127.0.0.1:8000"
       }
       env {
         name = "DATABASE_URL"
