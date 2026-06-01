@@ -27,6 +27,23 @@ terminate() {
 }
 trap terminate TERM INT
 
+# Block (via bash's /dev/tcp) until an upstream accepts a connection. Cloud Run
+# marks the instance ready the moment Caddy binds $PORT, so we must NOT start the
+# proxy until both upstreams can actually serve — otherwise the first request
+# after scale-to-zero races their startup and Caddy returns a 502. Opening the
+# socket read-only (`: < …`) tests connect() without sending bytes.
+wait_for() {
+	local host=$1 port=$2 name=$3 deadline=$((SECONDS + 90))
+	until (: <"/dev/tcp/${host}/${port}") 2>/dev/null; do
+		if ((SECONDS >= deadline)); then
+			echo "entrypoint: ${name} (${host}:${port}) did not bind within 90s" >&2
+			return 1
+		fi
+		sleep 0.5
+	done
+	echo "entrypoint: ${name} ready on ${host}:${port}"
+}
+
 bellweather api --host 127.0.0.1 --port 8000 &
 pids+=($!)
 
@@ -36,6 +53,10 @@ streamlit run /app/src/bellweather/web/app.py \
 	--server.enableCORS false --server.enableXsrfProtection false \
 	--browser.gatherUsageStats false &
 pids+=($!)
+
+# Gate the public proxy on upstream readiness (a failed wait tears the rest down).
+wait_for 127.0.0.1 8000 uvicorn || { terminate; exit 1; }
+wait_for 127.0.0.1 8501 streamlit || { terminate; exit 1; }
 
 caddy run --config /app/Caddyfile --adapter caddyfile &
 pids+=($!)

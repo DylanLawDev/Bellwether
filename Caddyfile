@@ -17,12 +17,19 @@
 	# endpoints, the health check, and the OpenAPI docs.
 	@api path /api/* /healthz /ingest /ingest/* /docs /openapi.json /redoc
 	handle @api {
-		reverse_proxy 127.0.0.1:8000
+		# lb_try_duration retries a brief upstream outage (e.g. the tail of a
+		# cold start) instead of returning 502 — defense-in-depth on top of the
+		# readiness gate in deploy/entrypoint.sh.
+		reverse_proxy 127.0.0.1:8000 {
+			lb_try_duration 10s
+		}
 	}
 
 	# Everything else is the Streamlit UI (root page, static assets, and the
 	# /_stcore/* websocket stream that makes it interactive).
 	handle {
-		reverse_proxy 127.0.0.1:8501
+		reverse_proxy 127.0.0.1:8501 {
+			lb_try_duration 10s
+		}
 	}
 }
