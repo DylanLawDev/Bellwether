@@ -30,3 +30,11 @@ def test_empty_fields_produce_no_tags():
     }
     tags = GdeltGkgExtractor().extract({"payload": payload})
     assert tags == []
+
+
+def test_extractor_is_registered_on_import():
+    from bellweather.extractors import get_extractor
+
+    ex = get_extractor("gdelt-gkg-v2")
+    assert ex is not None
+    assert ex.content_type == "gdelt-gkg-v2"
