@@ -1,6 +1,6 @@
 # T01 — Settings + Postgres connection pool
 
-**Spec:** `docs/superpowers/specs/2026-05-31-ingestor-extractor-design.md` (§8 Tech)
+**Spec:** `docs/specs/2026-05-31-ingestor-extractor-design.md` (§8 Tech)
 **Depends on:** T00. **Branch:** `ticket/T01-config-db`. **PR, do not merge without approval.**
 
 ## Goal

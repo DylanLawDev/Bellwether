@@ -1,6 +1,6 @@
 # T02 — Migration runner + initial schema (6 tables)
 
-**Spec:** `docs/superpowers/specs/2026-05-31-ingestor-extractor-design.md` (§6 Data model)
+**Spec:** `docs/specs/2026-05-31-ingestor-extractor-design.md` (§6 Data model)
 **Depends on:** T01. **Branch:** `ticket/T02-migrations`. **PR, do not merge without approval.**
 
 ## Goal

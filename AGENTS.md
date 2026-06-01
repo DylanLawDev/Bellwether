@@ -7,4 +7,4 @@
 - Local stack: `make up` (Postgres + fake GCS), then `make migrate`. `make down` to reset.
 - Config is env-driven via `src/bellweather/config.py`; never hardcode secrets. Copy `.env.example` to `.env`.
 - If a ticket needs something unbuilt, STOP and do its prerequisite ticket first — do not stub past it.
-- Each ticket file in `docs/superpowers/plans/tickets/` is the source of truth for its task.
+- Each ticket file in `docs/plans/tickets/` is the source of truth for its task.
