@@ -1,0 +1,62 @@
+import pytest
+from bellweather.migrate import apply_migrations
+from bellweather.db import get_conn
+from bellweather import queue
+
+
+@pytest.fixture(autouse=True)
+def _migrated():
+    apply_migrations()
+
+
+def _insert_raw(conn) -> int:
+    return conn.execute(
+        "insert into raw_records(source,kind,content_type,idempotency_key,payload_uri,fetched_at)"
+        " values('s','unstructured','c',%s,'gs://b/x',now()) returning id",
+        (f"k-{conn.execute('select gen_random_uuid()').fetchone()[0]}",),
+    ).fetchone()[0]
+
+
+def test_enqueue_then_lease_then_ack():
+    with get_conn() as conn:
+        rid = _insert_raw(conn)
+        jid = queue.enqueue(conn, rid)
+        conn.commit()
+        jobs = queue.lease(conn, limit=10)
+        conn.commit()
+        assert any(j.id == jid for j in jobs)
+        queue.ack(conn, jid)
+        conn.commit()
+        again = queue.lease(conn, limit=10)
+        conn.commit()
+        assert all(j.id != jid for j in again)
+
+
+def test_lease_skips_already_leased():
+    with get_conn() as c1, get_conn() as c2:
+        rid = _insert_raw(c1)
+        jid = queue.enqueue(c1, rid)
+        c1.commit()
+        leased1 = queue.lease(c1, limit=10)
+        c1.commit()
+        leased2 = queue.lease(c2, limit=10)
+        c2.commit()
+        ids1 = {j.id for j in leased1}
+        ids2 = {j.id for j in leased2}
+        assert jid in ids1 and jid not in ids2  # no double-lease
+
+
+def test_fail_retries_then_dead_letters():
+    with get_conn() as conn:
+        rid = _insert_raw(conn)
+        jid = queue.enqueue(conn, rid)
+        conn.commit()
+        for _ in range(5):
+            queue.lease(conn, limit=10)
+            conn.commit()
+            queue.fail(conn, jid, "boom", max_attempts=5)
+            conn.commit()
+        state = conn.execute(
+            "select state, attempts from work_queue where id=%s", (jid,)
+        ).fetchone()
+        assert state[0] == "failed" and state[1] >= 5
