@@ -33,4 +33,4 @@ src = ["src", "tests"]
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
