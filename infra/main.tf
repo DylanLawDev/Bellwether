@@ -140,8 +140,10 @@ resource "google_cloud_run_v2_service" "api" {
       }
     }
     containers {
-      image   = var.image
-      command = ["bellweather", "api", "--port", "8080"]
+      image = var.image
+      # No command override: rely on the image's ENTRYPOINT/CMD (`bellweather api --port 8080`).
+      # This lets the placeholder `hello` image keep its own entrypoint so the first
+      # `terraform apply` produces a Ready revision before T14's real image exists.
       ports {
         container_port = 8080
       }
@@ -167,7 +169,11 @@ resource "google_cloud_run_v2_service" "api" {
       }
     }
   }
-  depends_on = [google_project_service.apis, google_secret_manager_secret_version.db_url]
+  depends_on = [
+    google_project_service.apis,
+    google_secret_manager_secret_version.db_url,
+    google_secret_manager_secret_iam_member.db_url_access,
+  ]
 }
 
 # Public access to the API (tighten later if desired)
@@ -217,7 +223,11 @@ resource "google_cloud_run_v2_job" "worker" {
       }
     }
   }
-  depends_on = [google_project_service.apis]
+  depends_on = [
+    google_project_service.apis,
+    google_secret_manager_secret_version.db_url,
+    google_secret_manager_secret_iam_member.db_url_access,
+  ]
 }
 
 # --- Scheduler: run the worker job every minute ---
