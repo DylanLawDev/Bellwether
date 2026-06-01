@@ -2,11 +2,23 @@ import pytest
 from bellweather.migrate import apply_migrations
 from bellweather.db import get_conn
 from bellweather import queue
+from tests.conftest import clear_records
 
 
 @pytest.fixture(autouse=True)
 def _migrated():
     apply_migrations()
+    # These tests insert source='s' raw_records + work_queue rows but never clean
+    # them up. Without this, stale pending jobs accumulate across local runs and
+    # push newly-enqueued (highest-id) jobs out of lease()'s oldest-10 batch,
+    # flaking test_enqueue_then_lease_then_ack. Start each test from a clean queue.
+    with get_conn() as conn:
+        clear_records(conn, "s")
+        conn.commit()
+    yield
+    with get_conn() as conn:
+        clear_records(conn, "s")
+        conn.commit()
 
 
 def _insert_raw(conn) -> int:

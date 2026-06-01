@@ -6,6 +6,11 @@ from bellweather.db import get_conn
 from bellweather.queue import enqueue
 from bellweather.storage import get_bronze_store
 
+# Deliberate second source of truth: this MUST stay in sync with the extractor
+# registry (bellweather.extractors.known_content_types()). We hardcode it here so
+# the ingest/API process doesn't import the extractors package (and its heavier
+# deps); the worker imports them and has a defensive `unroutable` fallback if the
+# two ever diverge.
 KNOWN_CONTENT_TYPES: set[str] = {"gdelt-gkg-v2"}
 
 
