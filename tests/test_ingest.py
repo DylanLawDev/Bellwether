@@ -7,7 +7,7 @@ from bellweather.db import get_conn
 from bellweather.ingest import ingest_record
 from bellweather.migrate import apply_migrations
 from bellweather.storage import get_bronze_store
-from tests.conftest import requires_gcs
+from tests.conftest import clear_records, requires_gcs
 
 
 _KEYS = ("k-created-1", "k-dup", "k-unr", "k-uri-passthrough")
@@ -19,15 +19,7 @@ def _m():
     # Tests use fixed idempotency keys, so clear any rows they left behind on a
     # prior run; otherwise the second run would see them as duplicates.
     with get_conn() as c:
-        c.execute(
-            "delete from work_queue where raw_record_id in"
-            " (select id from raw_records where source='gdelt.gkg' and idempotency_key = any(%s))",
-            (list(_KEYS),),
-        )
-        c.execute(
-            "delete from raw_records where source='gdelt.gkg' and idempotency_key = any(%s)",
-            (list(_KEYS),),
-        )
+        clear_records(c, "gdelt.gkg", _KEYS)
         c.commit()
 
 

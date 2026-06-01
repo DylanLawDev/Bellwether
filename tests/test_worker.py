@@ -7,7 +7,7 @@ from bellweather.db import get_conn
 from bellweather.ingest import ingest_record
 from bellweather.migrate import apply_migrations
 from bellweather.worker import run_worker
-from tests.conftest import requires_gcs
+from tests.conftest import clear_observations, clear_records, requires_gcs
 
 _KEYS = ("wk-1", "wk-fail-1", "wk-agg-1", "wk-agg-2")
 # Coverage symbols these tests write observations into. Their observation rows
@@ -22,30 +22,12 @@ _SYMBOLS = ("theme:ECON_STOCKMARKET",)
 def _m():
     apply_migrations()
     # Tests use fixed idempotency keys, so clear the rows they left behind on a
-    # prior run; otherwise the second run would see them as duplicates. tags and
-    # work_queue both FK-reference raw_records, so delete children before parents.
+    # prior run; otherwise the second run would see them as duplicates.
     with get_conn() as c:
-        c.execute(
-            "delete from tags where raw_record_id in"
-            " (select id from raw_records where source='gdelt.gkg' and idempotency_key = any(%s))",
-            (list(_KEYS),),
-        )
-        c.execute(
-            "delete from work_queue where raw_record_id in"
-            " (select id from raw_records where source='gdelt.gkg' and idempotency_key = any(%s))",
-            (list(_KEYS),),
-        )
-        c.execute(
-            "delete from raw_records where source='gdelt.gkg' and idempotency_key = any(%s)",
-            (list(_KEYS),),
-        )
+        clear_records(c, "gdelt.gkg", _KEYS)
         # Reset the shared coverage observations so value/sample_count assertions
         # start from a clean slate regardless of test order or prior runs.
-        c.execute(
-            "delete from observations where tracked_symbol_id in"
-            " (select id from tracked_symbols where key = any(%s))",
-            (list(_SYMBOLS),),
-        )
+        clear_observations(c, _SYMBOLS)
         c.commit()
 
 
