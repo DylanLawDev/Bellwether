@@ -46,6 +46,39 @@ def test_lease_skips_already_leased():
         assert jid in ids1 and jid not in ids2  # no double-lease
 
 
+def test_lease_reclaims_expired_lease():
+    # A worker that leases a job and then dies (no ack/fail) must not orphan it:
+    # once its lease window elapses, the job is eligible to be leased again.
+    with get_conn() as conn:
+        rid = _insert_raw(conn)
+        jid = queue.enqueue(conn, rid)
+        conn.commit()
+        # lease with an already-expired window (lease_until = now() - 1s)
+        first = queue.lease(conn, limit=10, lease_seconds=-1)
+        conn.commit()
+        assert any(j.id == jid for j in first)
+        # the orphaned-but-expired job is reclaimed on the next lease
+        second = queue.lease(conn, limit=10)
+        conn.commit()
+        assert any(j.id == jid for j in second)
+        attempts = conn.execute("select attempts from work_queue where id=%s", (jid,)).fetchone()[0]
+        assert attempts >= 2  # incremented once per (re)lease
+
+
+def test_active_lease_is_not_reclaimed():
+    # The flip side: a still-valid lease must NOT be re-handed-out.
+    with get_conn() as conn:
+        rid = _insert_raw(conn)
+        jid = queue.enqueue(conn, rid)
+        conn.commit()
+        first = queue.lease(conn, limit=10, lease_seconds=60)
+        conn.commit()
+        assert any(j.id == jid for j in first)
+        second = queue.lease(conn, limit=10)
+        conn.commit()
+        assert all(j.id != jid for j in second)  # lease still active → skipped
+
+
 def test_fail_retries_then_dead_letters():
     with get_conn() as conn:
         rid = _insert_raw(conn)
