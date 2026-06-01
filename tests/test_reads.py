@@ -165,3 +165,35 @@ def test_get_config_masks_database_url(conn):
     assert "***" in db["value"]
     # the real password must not leak
     assert "bellweather:bellweather" not in db["value"]
+
+
+def test_mask_dsn_strips_userinfo_and_query_credentials():
+    # password in userinfo
+    m1 = reads._mask_dsn("postgresql://user:secret@db.example:5432/app")
+    assert "secret" not in m1 and m1 == "postgresql://***@db.example:5432/app"
+    # password (and other creds) in the query string must also be dropped
+    m2 = reads._mask_dsn("postgresql://db.example/app?user=u&password=secret&sslmode=require")
+    assert "secret" not in m2 and "password" not in m2 and "user=u" not in m2
+    # a value that isn't a URL at all degrades to a non-leaking placeholder
+    assert reads._mask_dsn("not-a-url") == "***"
+
+
+def test_queue_states_match_ui_contract():
+    # reads.QUEUE_STATES is defined locally (so the API runtime never imports the
+    # pandas-backed UI package); guard that it stays in lockstep with the contract.
+    assert list(reads.QUEUE_STATES) == list(contract.QUEUE_STATES)
+
+
+def test_api_import_does_not_pull_in_ui_package():
+    # uvicorn bellweather.api:app must import cleanly with only runtime deps; the
+    # UI data package imports pandas (a dev/ui-only dep), so importing the API
+    # must not load bellweather.web.data.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, bellweather.api; "
+        "loaded = sorted(m for m in sys.modules if m.startswith('bellweather.web')); "
+        "assert not loaded, loaded"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)

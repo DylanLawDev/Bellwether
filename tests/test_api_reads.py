@@ -71,3 +71,11 @@ def test_config_endpoint_masks_database_url():
     assert all(set(r) == {"key", "value", "note"} for r in rows)
     db = next(r for r in rows if r["key"] == "database_url")
     assert "***" in db["value"] and "bellweather:bellweather" not in db["value"]
+
+
+def test_negative_pagination_is_422_not_500():
+    # Negative LIMIT/OFFSET would make Postgres raise; the endpoints constrain
+    # the params so FastAPI rejects them with a validation error instead.
+    for path in ("/api/records", "/api/tags"):
+        assert client.get(path, params={"limit": -1}).status_code == 422
+        assert client.get(path, params={"offset": -5}).status_code == 422

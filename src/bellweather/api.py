@@ -135,8 +135,8 @@ def api_records(
     search: str | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
     with get_conn() as conn:
         return reads.query_raw_records(
@@ -158,8 +158,8 @@ def api_tags(
     search: str | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
 ):
     with get_conn() as conn:
         return reads.query_tags(

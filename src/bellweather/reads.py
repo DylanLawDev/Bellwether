@@ -10,12 +10,19 @@ changes to the six-table spine.
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from psycopg import Connection
 from psycopg.rows import dict_row
 
 from bellweather.config import get_settings
-from bellweather.web.data.source import QUEUE_STATES
+
+# Work-queue states, zero-filled by get_queue_stats(). Defined here rather than
+# imported from bellweather.web.data.source so the API runtime never pulls in the
+# UI data package (its __init__ imports a pandas-backed backend, and pandas is a
+# dev/ui-only dependency). tests/test_reads.py asserts this stays in sync with
+# the UI contract's QUEUE_STATES.
+QUEUE_STATES = ("pending", "leased", "done", "failed")
 
 # Settings fields surfaced (in order) by /api/config, with operator notes. The
 # value comes from the live Settings; database_url is masked in get_config().
@@ -220,13 +227,17 @@ def get_config(conn: Connection | None = None) -> list[dict]:
 
 
 def _mask_dsn(dsn: str) -> str:
-    """Hide the password (and the whole netloc) of a Postgres DSN.
+    """Hide every credential of a Postgres DSN.
 
-    Returns a credential-free shape like ``postgresql://***@<host>/<db>`` so the
-    UI can confirm a DB is configured without ever leaking the connection string.
+    Returns a credential-free shape like ``postgresql://***@<host>:<port>/<db>``
+    so the UI can confirm a DB is configured without leaking the connection
+    string. Drops the userinfo (``user:pass@``) *and* the query string — secrets
+    can also ride in query params (e.g. ``?password=...``), so those are removed
+    too rather than only stripping ``user:pass@``.
     """
     if "://" not in dsn:
         return "***"
-    scheme, rest = dsn.split("://", 1)
-    host_db = rest.split("@", 1)[-1]  # drop any user:pass@
-    return f"{scheme}://***@{host_db}"
+    parts = urlsplit(dsn)
+    host = parts.hostname or ""
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://***@{host}{port}{parts.path}"
