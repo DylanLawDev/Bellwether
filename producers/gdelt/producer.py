@@ -7,6 +7,7 @@ the batch via ``BellwetherClient``. Uses nothing privileged.
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -89,9 +90,18 @@ def _fetch_lines(path_or_url: str) -> list[str]:
         return f.read().splitlines()
 
 
+def _default_client() -> BellwetherClient:
+    # An external producer has only BELLWEATHER_API_URL, never the server's DB /
+    # storage settings. Build the client from the public URL directly so we don't
+    # trip BellwetherClient()'s fallback to get_settings(), which requires
+    # database_url and bellweather_bucket and would crash the producer before it
+    # could reach the ingest API.
+    return BellwetherClient(base_url=os.environ.get("BELLWEATHER_API_URL", "http://localhost:8000"))
+
+
 def run(path_or_url: str, client: BellwetherClient | None = None) -> list[IngestResult]:
     """Fetch a GKG batch, normalize it, and ingest via the Bellwether client."""
-    client = client or BellwetherClient()
+    client = client or _default_client()
     subs = rows_to_submissions(_fetch_lines(path_or_url))
     return client.ingest_batch(subs)
 

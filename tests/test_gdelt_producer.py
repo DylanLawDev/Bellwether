@@ -10,7 +10,7 @@
 #   15 V1.5Tone               -> v15_tone         (raw comma list; [0]=overall tone)
 import pathlib
 
-from producers.gdelt.producer import parse_gkg_line, rows_to_submissions
+from producers.gdelt.producer import _default_client, parse_gkg_line, rows_to_submissions
 
 LINES = (pathlib.Path(__file__).parent / "fixtures/gkg_sample.csv").read_text().splitlines()
 
@@ -18,6 +18,24 @@ LINES = (pathlib.Path(__file__).parent / "fixtures/gkg_sample.csv").read_text().
 def test_parse_extracts_payload_fields():
     p = parse_gkg_line(LINES[0])
     assert "v2_themes" in p and "v15_tone" in p and "gkg_record_id" in p and "date" in p
+
+
+def test_default_client_does_not_require_server_settings(monkeypatch):
+    # The producer is external: it has only BELLWEATHER_API_URL, not the server's
+    # database_url/bellweather_bucket. Building the default client must not reach
+    # for get_settings(), so make any such call explode and assert we don't.
+    import bellweather.client as client_mod
+
+    def _boom():
+        raise AssertionError("producer must not read server settings via get_settings()")
+
+    monkeypatch.setattr(client_mod, "get_settings", _boom)
+    monkeypatch.setenv("BELLWEATHER_API_URL", "http://example.test:9999")
+    c = _default_client()
+    try:
+        assert c._base == "http://example.test:9999"
+    finally:
+        c.close()
 
 
 def test_rows_to_submissions_uses_record_id_as_idempotency_key():
