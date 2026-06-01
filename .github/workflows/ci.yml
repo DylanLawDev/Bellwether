@@ -13,17 +13,27 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U bellweather" --health-interval 2s
           --health-timeout 3s --health-retries 20
-      # NOTE: the fake-gcs service container is intentionally omitted. The
-      # `--entrypoint` override (see T00) is finicky in Actions and fails job
-      # init. With STORAGE_EMULATOR_HOST unset, T03's skip-guard skips the GCS
-      # tests cleanly, keeping CI green. A later ticket may start fake-gcs
-      # inside the test session if GCS tests must run in CI.
+      # fake-gcs is started as a step below (see "Start fake GCS server") rather
+      # than as a service container: the image needs CLI args (`-scheme http`,
+      # `-public-host`) that the `services:` block can't pass, so a service entry
+      # would come up as https and the http client could not reach it.
     env:
       DATABASE_URL: postgresql://bellweather:bellweather@localhost:5432/bellweather
       BELLWEATHER_BUCKET: bellweather-bronze-ci
+      STORAGE_EMULATOR_HOST: http://localhost:4443
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
+      - name: Start fake GCS server
+        run: |
+          docker run -d --name fake-gcs -p 4443:4443 fsouza/fake-gcs-server:1.49 \
+            -scheme http -port 4443 -public-host localhost:4443
+          # wait until the emulator accepts connections so the GCS tests run
+          # (rather than silently skipping via the requires_gcs guard)
+          for i in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/localhost/4443) 2>/dev/null; then echo "fake-gcs up"; exec 3>&-; break; fi
+            sleep 1
+          done
       - run: uv sync
       - run: uv run ruff check . && uv run ruff format --check .
       - run: uv run pytest
