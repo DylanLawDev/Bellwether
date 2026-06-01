@@ -1,0 +1,35 @@
+# Bellwether single-image reverse proxy (T17).
+#
+# Cloud Run gives the container ONE ingress port ($PORT, default 8080). Caddy
+# binds it and routes by path so one URL serves both halves of the app:
+#   - FastAPI (ingestion + read API + health + docs) on 127.0.0.1:8000
+#   - Streamlit operator UI (incl. its /_stcore/* websocket) on 127.0.0.1:8501
+#
+# reverse_proxy upgrades websockets automatically, so Streamlit stays interactive.
+{
+	admin off
+	# Cloud Run terminates TLS at the edge; Caddy speaks plain HTTP on $PORT.
+	auto_https off
+}
+
+:{$PORT:8080} {
+	# FastAPI owns the API surface: the /api/* read router, the ingestion
+	# endpoints, the health check, and the OpenAPI docs.
+	@api path /api/* /healthz /ingest /ingest/* /docs /openapi.json /redoc
+	handle @api {
+		# lb_try_duration retries a brief upstream outage (e.g. the tail of a
+		# cold start) instead of returning 502 — defense-in-depth on top of the
+		# readiness gate in deploy/entrypoint.sh.
+		reverse_proxy 127.0.0.1:8000 {
+			lb_try_duration 10s
+		}
+	}
+
+	# Everything else is the Streamlit UI (root page, static assets, and the
+	# /_stcore/* websocket stream that makes it interactive).
+	handle {
+		reverse_proxy 127.0.0.1:8501 {
+			lb_try_duration 10s
+		}
+	}
+}

@@ -29,6 +29,9 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - name: Configure docker
         run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+      # One image for everything (T17): the API service runs the supervisor
+      # entrypoint (uvicorn + Streamlit + Caddy); the migrate + worker Jobs below
+      # override `command`, so they run the CLI directly and skip the proxy/UI.
       - name: Build & push
         run: |
           IMAGE="$REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/$REPO/app:${{ github.sha }}"
