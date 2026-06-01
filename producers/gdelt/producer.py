@@ -82,7 +82,9 @@ def rows_to_submissions(lines: Iterable[str]) -> list[Submission]:
 
 def _fetch_lines(path_or_url: str) -> list[str]:
     if path_or_url.startswith("http"):
-        return httpx.get(path_or_url, timeout=60).text.splitlines()
+        resp = httpx.get(path_or_url, timeout=60)
+        resp.raise_for_status()
+        return resp.text.splitlines()
     with open(path_or_url, encoding="utf-8", errors="replace") as f:
         return f.read().splitlines()
 

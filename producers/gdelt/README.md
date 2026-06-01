@@ -47,7 +47,9 @@ http://data.gdeltproject.org/documentation/GDELT-Global_Knowledge_Graph_Codebook
 
 The four list fields (themes/locations/persons/organizations) use the **V2
 Enhanced** columns, whose internal format is `Name,offset;Name,offset`. The
-producer strips the `,offset` and keeps `;`-separated names. Verified canonical
+producer strips the trailing `,offset` and keeps the `;`-separated values (for
+`v2_locations` each value is a full `#`-delimited location record, not a bare
+name). Verified canonical
 2.1 layout used here:
 
 | Index | Field                    | Payload key        |
