@@ -43,6 +43,23 @@ def test_ingest_batch(httpserver):
     assert [r.raw_record_id for r in rs] == [1, 2]
 
 
+def test_ingest_batch_parses_error_result(httpserver):
+    # The batch endpoint isolates a malformed record as an "error" result with a
+    # null raw_record_id; the client must parse it without raising.
+    subs = [_sub("c1")]
+    expected_body = {"records": [s.model_dump(mode="json") for s in subs]}
+    httpserver.expect_request("/ingest/batch", method="POST", json=expected_body).respond_with_json(
+        {
+            "results": [
+                {"status": "error", "raw_record_id": None, "payload_uri": None, "error": "bad"},
+            ]
+        }
+    )
+    c = BellwetherClient(base_url=httpserver.url_for(""))
+    rs = c.ingest_batch(subs)
+    assert rs[0].status == "error" and rs[0].raw_record_id is None and rs[0].error == "bad"
+
+
 def test_client_context_manager(httpserver):
     sub = _sub("c1")
     expected_body = sub.model_dump(mode="json")
