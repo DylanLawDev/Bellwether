@@ -1,0 +1,12 @@
+tests/
+infra/
+docs/
+.git/
+.venv/
+__pycache__/
+*.tfstate*
+.terraform/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
