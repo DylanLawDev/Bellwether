@@ -5,6 +5,13 @@ on:
 permissions:
   contents: read
   id-token: write
+# Serialize main-branch deploys so a slower older run can't update Cloud Run
+# after a newer one and roll production back to a stale image. cancel-in-progress
+# is false to avoid interrupting an in-flight migration; the newer run waits, then
+# deploys last → production ends on the latest image.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 env:
   REGION: us-central1
   REPO: bellweather
