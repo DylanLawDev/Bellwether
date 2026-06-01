@@ -1,0 +1,29 @@
+name: ci
+on:
+  pull_request:
+  push: { branches: [main] }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env: { POSTGRES_USER: bellweather, POSTGRES_PASSWORD: bellweather, POSTGRES_DB: bellweather }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bellweather" --health-interval 2s
+          --health-timeout 3s --health-retries 20
+      gcs:
+        image: fsouza/fake-gcs-server:1.49
+        ports: ["4443:4443"]
+        options: --entrypoint /bin/fake-gcs-server
+    env:
+      DATABASE_URL: postgresql://bellweather:bellweather@localhost:5432/bellweather
+      BELLWEATHER_BUCKET: bellweather-bronze-ci
+      STORAGE_EMULATOR_HOST: http://localhost:4443
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run pytest
