@@ -19,7 +19,10 @@ def lease(conn, limit: int = 10, lease_seconds: int = 60) -> list[Job]:
         """
         with picked as (
           select id from work_queue
-          where state='pending' and lease_until < now()
+          -- pending jobs (lease_until defaults to now() at enqueue, so eligible
+          -- immediately) AND leased jobs whose lease has expired -> a crashed
+          -- worker's job is reclaimed instead of being orphaned forever.
+          where state in ('pending', 'leased') and lease_until < now()
           order by id
           for update skip locked
           limit %s
