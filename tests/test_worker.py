@@ -9,7 +9,13 @@ from bellweather.migrate import apply_migrations
 from bellweather.worker import run_worker
 from tests.conftest import requires_gcs
 
-_KEYS = ("wk-1", "wk-fail-1")
+_KEYS = ("wk-1", "wk-fail-1", "wk-agg-1", "wk-agg-2")
+# Coverage symbols these tests write observations into. Their observation rows
+# accumulate (value/sample_count) across runs and are SHARED between tests
+# (e.g. theme:ECON_STOCKMARKET is touched by both the e2e test and the batch
+# aggregation test), so we reset them per-test to keep value-sensitive
+# assertions deterministic and order-independent.
+_SYMBOLS = ("theme:ECON_STOCKMARKET",)
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +38,13 @@ def _m():
         c.execute(
             "delete from raw_records where source='gdelt.gkg' and idempotency_key = any(%s)",
             (list(_KEYS),),
+        )
+        # Reset the shared coverage observations so value/sample_count assertions
+        # start from a clean slate regardless of test order or prior runs.
+        c.execute(
+            "delete from observations where tracked_symbol_id in"
+            " (select id from tracked_symbols where key = any(%s))",
+            (list(_SYMBOLS),),
         )
         c.commit()
 
@@ -114,3 +127,46 @@ def test_throwing_extractor_routes_through_fail(monkeypatch):
     assert last_error is not None and "boom" in last_error
     assert st == "received"  # never marked processed
     assert ntags == 0  # nothing written
+
+
+@requires_gcs
+def test_batch_leasing_and_coverage_aggregation():
+    # Two routable records with the SAME fetched_at (-> same observation bucket)
+    # and the SAME theme, but DISTINCT idempotency keys -> two queued jobs.
+    fetched_at = datetime(2026, 5, 31, 14, 15, tzinfo=timezone.utc)
+    rec_ids = []
+    for key in ("wk-agg-1", "wk-agg-2"):
+        sub = Submission(
+            source="gdelt.gkg",
+            kind="unstructured",
+            content_type="gdelt-gkg-v2",
+            fetched_at=fetched_at,
+            idempotency_key=key,
+            payload={"v2_themes": "ECON_STOCKMARKET", "v15_tone": "0,0"},
+        )
+        r = ingest_record(sub)
+        assert r.status == "created"
+        rec_ids.append(r.raw_record_id)
+
+    # A single run_worker(once=True) leases a BATCH (limit=20) and must drain
+    # BOTH jobs in one pass.
+    run_worker(once=True)
+
+    with get_conn() as c:
+        statuses = [
+            c.execute("select status from raw_records where id=%s", (rid,)).fetchone()[0]
+            for rid in rec_ids
+        ]
+        # Exactly one observation row for the shared symbol+bucket, and its
+        # value/sample_count reflect BOTH jobs (the DO UPDATE increment arm).
+        nobs, value, sample_count = c.execute(
+            "select count(*), max(o.value), max(o.sample_count) from observations o"
+            " join tracked_symbols s on s.id=o.tracked_symbol_id"
+            " where s.key='theme:ECON_STOCKMARKET'"
+        ).fetchone()
+
+    # Both processed -> the batch loop handled job #2 after committing job #1.
+    assert statuses == ["processed", "processed"]
+    assert nobs == 1
+    assert value == 2.0
+    assert sample_count == 2

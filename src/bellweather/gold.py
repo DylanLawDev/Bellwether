@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from bellweather.config import get_settings
+
 
 def bucket_ts(when: datetime, granularity: str) -> datetime:
     if granularity == "hour":
@@ -11,8 +13,6 @@ def bucket_ts(when: datetime, granularity: str) -> datetime:
 
 
 def upsert_coverage(conn, source, tag_type, raw_value, observed_at):
-    from bellweather.config import get_settings
-
     key = f"{tag_type}:{raw_value}"
     sym_id = conn.execute(
         """insert into tracked_symbols(key, kind) values(%s,'coverage')
