@@ -45,6 +45,8 @@ RAW_RECORD_COLUMNS = [
     "fetched_at",
     "payload_uri",
 ]
+# `score` is a JSON object (the `tags.score` jsonb column), not a scalar — e.g.
+# {"tone": -1.2} or {"count": 3}. A live backend must surface it as a dict, not flatten it.
 TAG_COLUMNS = [
     "id",
     "raw_record_id",

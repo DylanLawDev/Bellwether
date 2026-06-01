@@ -12,6 +12,13 @@ def test_tracked_symbols_shape():
     assert (df["kind"] == "coverage").all()
 
 
+def test_symbol_key_is_composed_from_parts():
+    # Must match gold.upsert_coverage's f"{tag_type}:{raw_value}" keying.
+    df = mock.get_tracked_symbols()
+    composed = df["tag_type"] + ":" + df["raw_value"]
+    assert (df["key"] == composed).all()
+
+
 def test_observations_shape_and_filter():
     all_keys = mock.get_tracked_symbols()["key"].tolist()
     df = mock.get_observations(all_keys[:2])
@@ -43,10 +50,38 @@ def test_raw_records_pagination():
     assert set(page1["id"]).isdisjoint(set(page2["id"]))
 
 
+def test_raw_records_search_and_content_type_filters():
+    # search matches idempotency_key (case-insensitive); content_type narrows rows.
+    all_rows = mock.query_raw_records(limit=1000)
+    needle = all_rows.iloc[0]["idempotency_key"][:10].upper()
+    hits = mock.query_raw_records(search=needle, limit=1000)
+    assert not hits.empty
+    assert hits["idempotency_key"].str.contains(needle, case=False).all()
+    assert (
+        mock.query_raw_records(content_type="gdelt.gkg", limit=1000).shape[0] == all_rows.shape[0]
+    )
+    assert mock.query_raw_records(content_type="nope", limit=1000).empty
+
+
 def test_tags_shape():
     df = mock.query_tags()
     assert list(df.columns) == source.TAG_COLUMNS
     assert not df.empty
+
+
+def test_tags_type_and_search_filters():
+    themes = mock.query_tags(tag_type="theme", limit=1000)
+    assert not themes.empty
+    assert (themes["tag_type"] == "theme").all()
+    hits = mock.query_tags(search="Ukraine", limit=1000)
+    assert not hits.empty
+    assert hits["raw_value"].str.contains("Ukraine", case=False).all()
+
+
+def test_tags_score_is_a_mapping():
+    # `score` mirrors the tags.score jsonb column — a dict, not a scalar.
+    df = mock.query_tags(limit=1000)
+    assert df["score"].map(lambda s: isinstance(s, dict)).all()
 
 
 def test_queue_stats_keys():

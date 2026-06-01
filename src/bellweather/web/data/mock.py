@@ -18,17 +18,18 @@ from bellweather.web.data import source as contract
 _SEED = 20260531
 _HOURS = 14 * 24  # ~14 days of hourly buckets
 
-# (key, tag_type, raw_value, baseline coverage rate). Keys match gold.upsert_coverage:
-# f"{tag_type}:{raw_value}".
+# (tag_type, raw_value, baseline coverage rate). The tracked-symbol key is composed
+# as f"{tag_type}:{raw_value}" in _build() — the same rule gold.upsert_coverage uses
+# (src/bellweather/gold.py) — so the mock can't desync from the real keying.
 _SYMBOLS = [
-    ("theme:ECON_STOCKMARKET", "theme", "ECON_STOCKMARKET", 11.0),
-    ("theme:WB_2670_JOBS", "theme", "WB_2670_JOBS", 7.0),
-    ("person:jerome powell", "person", "jerome powell", 4.0),
-    ("person:vladimir putin", "person", "vladimir putin", 6.0),
-    ("org:federal reserve", "org", "federal reserve", 5.0),
-    ("org:european central bank", "org", "european central bank", 3.0),
-    ("location:Ukraine", "location", "Ukraine", 9.0),
-    ("location:China", "location", "China", 8.0),
+    ("theme", "ECON_STOCKMARKET", 11.0),
+    ("theme", "WB_2670_JOBS", 7.0),
+    ("person", "jerome powell", 4.0),
+    ("person", "vladimir putin", 6.0),
+    ("org", "federal reserve", 5.0),
+    ("org", "european central bank", 3.0),
+    ("location", "Ukraine", 9.0),
+    ("location", "China", 8.0),
 ]
 
 # (symbol index, hours-ago-from-end of the spike center, multiplier) — gives the
@@ -47,7 +48,8 @@ def _build():
 
     # --- tracked_symbols + observations -------------------------------------
     sym_rows, obs_rows = [], []
-    for sid, (key, tag_type, raw_value, lam) in enumerate(_SYMBOLS, start=1):
+    for sid, (tag_type, raw_value, lam) in enumerate(_SYMBOLS, start=1):
+        key = f"{tag_type}:{raw_value}"  # matches gold.upsert_coverage keying
         # mild daily seasonality on top of a Poisson baseline
         season = 1.0 + 0.35 * np.sin(np.arange(_HOURS) * (2 * np.pi / 24))
         counts = rng.poisson(lam * season).astype(int)
@@ -111,7 +113,7 @@ def _build():
     n_tags = 400
     tag_rows = []
     for i in range(1, n_tags + 1):
-        _, tag_type, raw_value, _ = _SYMBOLS[int(rng.integers(0, len(_SYMBOLS)))]
+        tag_type, raw_value, _ = _SYMBOLS[int(rng.integers(0, len(_SYMBOLS)))]
         observed = end - timedelta(hours=int(rng.integers(0, _HOURS)))
         if tag_type == "person" and rng.random() < 0.4:
             tag_type, raw_value = "tone", "tone"
