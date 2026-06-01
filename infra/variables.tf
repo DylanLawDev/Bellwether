@@ -8,24 +8,15 @@ variable "region" {
   default = "us-central1"
 }
 
-variable "db_tier" {
-  type    = string
-  default = "db-f1-micro"
-}
-
-variable "db_name" {
-  type    = string
-  default = "bellweather"
-}
-
-variable "db_user" {
-  type    = string
-  default = "bellweather"
-}
-
 variable "bucket_name" {
   type        = string
   description = "globally-unique GCS bronze bucket name"
+}
+
+variable "database_url" {
+  type        = string
+  sensitive   = true
+  description = "Neon (or other external Postgres) connection string — stored in Secret Manager"
 }
 
 variable "image" {

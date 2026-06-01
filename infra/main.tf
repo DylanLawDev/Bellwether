@@ -2,7 +2,6 @@
 locals {
   apis = [
     "run.googleapis.com",
-    "sqladmin.googleapis.com",
     "storage.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudscheduler.googleapis.com",
@@ -36,49 +35,7 @@ resource "google_artifact_registry_repository" "repo" {
   depends_on    = [google_project_service.apis]
 }
 
-# --- Cloud SQL Postgres (db-f1-micro) ---
-resource "random_password" "db" {
-  length  = 24
-  special = false
-}
-
-resource "google_sql_database_instance" "pg" {
-  name             = "bellweather-pg"
-  database_version = "POSTGRES_16"
-  region           = var.region
-  settings {
-    tier              = var.db_tier
-    availability_type = "ZONAL"
-    disk_size         = 10
-    disk_autoresize   = true
-    backup_configuration {
-      enabled = true
-    }
-    ip_configuration {
-      ipv4_enabled = true # public IP; Cloud Run connects via connector
-    }
-  }
-  deletion_protection = false
-  depends_on          = [google_project_service.apis]
-}
-
-resource "google_sql_database" "db" {
-  name     = var.db_name
-  instance = google_sql_database_instance.pg.name
-}
-
-resource "google_sql_user" "user" {
-  name     = var.db_user
-  instance = google_sql_database_instance.pg.name
-  password = random_password.db.result
-}
-
-# --- DATABASE_URL via Cloud SQL unix socket (Cloud Run mounts /cloudsql) ---
-locals {
-  conn   = google_sql_database_instance.pg.connection_name
-  db_url = "postgresql://${var.db_user}:${random_password.db.result}@/${var.db_name}?host=/cloudsql/${local.conn}"
-}
-
+# --- DATABASE_URL secret (populated from var.database_url — Neon connection string) ---
 resource "google_secret_manager_secret" "db_url" {
   secret_id = "bellweather-database-url"
   replication {
@@ -89,19 +46,13 @@ resource "google_secret_manager_secret" "db_url" {
 
 resource "google_secret_manager_secret_version" "db_url" {
   secret      = google_secret_manager_secret.db_url.id
-  secret_data = local.db_url
+  secret_data = var.database_url
 }
 
 # --- Runtime service account + IAM ---
 resource "google_service_account" "runtime" {
   account_id   = "bellweather-runtime"
   display_name = "Bellweather Cloud Run runtime"
-}
-
-resource "google_project_iam_member" "sql_client" {
-  project = var.project_id
-  role    = "roles/cloudsql.client"
-  member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 
 resource "google_storage_bucket_iam_member" "bronze_rw" {
@@ -123,21 +74,16 @@ locals {
   }
 }
 
-# --- Ingestion API (Cloud Run service) ---
+# --- Ingestion API + UI (Cloud Run service) ---
 resource "google_cloud_run_v2_service" "api" {
-  name     = "bellweather-api"
-  location = var.region
+  name                = "bellweather-api"
+  location            = var.region
+  deletion_protection = false
   template {
     service_account = google_service_account.runtime.email
     scaling {
       min_instance_count = 0
       max_instance_count = 2
-    }
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [local.conn]
-      }
     }
     containers {
       image = var.image
@@ -158,10 +104,6 @@ resource "google_cloud_run_v2_service" "api" {
           cpu    = "1"
           memory = "1Gi"
         }
-      }
-      volume_mounts {
-        name       = "cloudsql"
-        mount_path = "/cloudsql"
       }
       dynamic "env" {
         for_each = local.common_env
@@ -208,24 +150,15 @@ resource "google_cloud_run_v2_service_iam_member" "api_public" {
 
 # --- Worker (Cloud Run Job: `bellweather worker --once`) ---
 resource "google_cloud_run_v2_job" "worker" {
-  name     = "bellweather-worker"
-  location = var.region
+  name                = "bellweather-worker"
+  location            = var.region
+  deletion_protection = false
   template {
     template {
       service_account = google_service_account.runtime.email
-      volumes {
-        name = "cloudsql"
-        cloud_sql_instance {
-          instances = [local.conn]
-        }
-      }
       containers {
         image   = var.image
         command = ["bellweather", "worker", "--once"]
-        volume_mounts {
-          name       = "cloudsql"
-          mount_path = "/cloudsql"
-        }
         dynamic "env" {
           for_each = local.common_env
           content {
