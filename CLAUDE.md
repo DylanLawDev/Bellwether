@@ -66,7 +66,7 @@ Run a single test (`make up` must be running for anything touching Postgres or G
 uv run pytest tests/test_queue.py::test_lease_skips_already_leased -v
 ```
 
-Local config: copy `.env.example` to `.env`. `STORAGE_EMULATOR_HOST` points tests at fake-gcs locally; **unset it in prod** to use real GCS. GCS tests use a `requires_gcs` marker and **auto-skip** when the emulator is unreachable, so CI stays green without fake-gcs.
+Local config: copy `.env.example` to `.env`. `STORAGE_EMULATOR_HOST` points tests at fake-gcs locally; **unset it in prod** to use real GCS. GCS tests use a `requires_gcs` marker and **auto-skip** when the emulator is unreachable (e.g. you ran `pytest` without `make up`). CI starts fake-gcs explicitly, so those tests run there.
 
 ## Conventions (enforced in `AGENTS.md`)
 
@@ -80,6 +80,6 @@ Local config: copy `.env.example` to `.env`. `STORAGE_EMULATOR_HOST` points test
 
 - **Spelling split is intentional and load-bearing.** The Python package, DB names, and identifiers use `bellweather` (the original misspelling). The product/prose name is **Bellwether** (correct). Don't "fix" the package name — imports, the Docker image, and Cloud SQL all key off `bellweather`.
 - **`get_settings()` / `get_pool()` are process-wide `@lru_cache`.** Any test that monkeypatches the environment MUST clear the cache *before and after* — a throwaway `DATABASE_URL` leaking into a later test once caused every DB test to time out resolving a bogus host. An autouse fixture in `tests/conftest.py` now resets the settings cache around every test; keep it.
-- **`queue.lease()` does not yet reclaim expired leases** — it only selects `state='pending'`, so a worker that crashes mid-job orphans its row (`lease_until` expiry is currently a no-op). Widen the predicate to also pick up `state='leased' AND lease_until < now()` when building the worker (T11), before shipping it.
+- **`queue.lease()` reclaims expired leases.** It selects `state in ('pending','leased') and lease_until < now()`, so a job whose worker crashed before `ack`/`fail` is re-leased once its lease window elapses rather than being orphaned. `attempts` increments on every (re)lease, so a job that keeps killing its worker still dead-letters via `fail()`/`max_attempts`. Corollary: the worker's extraction (T11) must be **idempotent**, since a job can legitimately be processed more than once after an expired lease.
 - **Canonical doc paths** are `docs/specs/` (design specs) and `docs/plans/` (the build plan + `docs/plans/tickets/`). Earlier revisions of the plan/tickets referenced a `docs/superpowers/...` prefix that never existed in the repo; if you see it resurface, it's wrong.
-- **CI intentionally omits fake-gcs** (the service-container entrypoint override is finicky in Actions), so the GCS round-trip — and later the worker end-to-end test — *skip* in CI rather than run. Before the worker ticket (T11) lands, start the emulator in-session so those paths get real coverage.
+- **CI runs fake-gcs as a `docker run` step**, not a service container — the image needs CLI args (`-scheme http`, `-public-host`) the `services:` block can't pass (it would default to https and be unreachable). The GCS round-trip tests run in CI as a result; the T11 worker end-to-end test will too. If GCS tests start *skipping* in CI, check that the "Start fake GCS server" step is healthy and `STORAGE_EMULATOR_HOST` is set.
