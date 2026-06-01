@@ -9,7 +9,7 @@ No network.
 import pandas as pd
 import pytest
 
-from bellweather.config import get_settings
+from bellweather.config import get_ui_settings
 from bellweather.web.data import live, source as contract
 
 _TS = "2026-06-01T11:00:00+00:00"
@@ -64,8 +64,9 @@ def _api(httpserver, monkeypatch):
     httpserver.expect_request("/api/ingestion-rate").respond_with_json(_RATE)
     httpserver.expect_request("/api/config").respond_with_json(_CONFIG)
     monkeypatch.setenv("BELLWEATHER_API_URL", httpserver.url_for("").rstrip("/"))
-    get_settings.cache_clear()
+    get_ui_settings.cache_clear()
     yield
+    get_ui_settings.cache_clear()
 
 
 def test_get_tracked_symbols():
@@ -120,3 +121,31 @@ def test_get_worker_runs_is_empty_but_shaped():
     df = live.get_worker_runs()
     assert list(df.columns) == contract.WORKER_RUN_COLUMNS
     assert df.empty
+
+
+def test_live_needs_no_db_or_gcs_env(monkeypatch, tmp_path, httpserver):
+    # The UI may run as a thin client against a remote API with none of the
+    # pipeline's DB/GCS secrets present. Isolate from the repo .env and clear the
+    # env so only bellweather_api_url (defaulted) remains: the live backend must
+    # still work — proving it doesn't build the full Settings (which requires
+    # database_url + bellweather_bucket and would fail validation here).
+    import pytest as _pytest
+
+    from bellweather.config import Settings, UISettings, get_settings
+
+    absent = str(tmp_path / "absent.env")
+    monkeypatch.setattr(UISettings, "model_config", UISettings.model_config | {"env_file": absent})
+    monkeypatch.setattr(Settings, "model_config", Settings.model_config | {"env_file": absent})
+    for var in ("DATABASE_URL", "BELLWEATHER_BUCKET", "STORAGE_EMULATOR_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("BELLWEATHER_API_URL", httpserver.url_for("").rstrip("/"))
+    get_settings.cache_clear()
+    get_ui_settings.cache_clear()
+
+    # Guard the guard: the full pipeline Settings genuinely can't build here.
+    with _pytest.raises(Exception):
+        get_settings()
+    # The live backend works anyway — it uses UISettings, not Settings.
+    assert live.get_queue_stats() == _QUEUE
+    get_settings.cache_clear()
+    get_ui_settings.cache_clear()

@@ -15,3 +15,21 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()  # type: ignore[call-arg]
+
+
+class UISettings(BaseSettings):
+    """Minimal settings for the web UI running as a thin API client.
+
+    Only needs the read-API base URL. Deliberately does NOT require the
+    pipeline's ``database_url`` / ``bellweather_bucket``, so the UI can run in a
+    client-only environment (``BELLWEATHER_UI_SOURCE=live``) against a remote API
+    without carrying the server's DB/GCS secrets.
+    """
+
+    bellweather_api_url: str = "http://localhost:8000"
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+@lru_cache
+def get_ui_settings() -> UISettings:
+    return UISettings()

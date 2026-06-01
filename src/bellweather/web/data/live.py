@@ -15,7 +15,7 @@ from datetime import datetime
 import httpx
 import pandas as pd
 
-from bellweather.config import get_settings
+from bellweather.config import get_ui_settings
 from bellweather.web.data import source as contract
 
 _TIMEOUT = 30.0
@@ -25,14 +25,16 @@ def _get(path: str, **params) -> object:
     """GET ``{bellweather_api_url}{path}`` with ``params`` and return parsed JSON.
 
     ``None`` params are dropped; ``datetime`` params are sent as ISO-8601. The
-    base URL is read at call time (not import) so tests can repoint it.
+    base URL is read at call time (not import) so tests can repoint it. Uses
+    UISettings (not the full pipeline Settings) so a client-only UI environment
+    needs no DB/GCS secrets to reach a remote API.
     """
     clean: dict = {}
     for key, value in params.items():
         if value is None:
             continue
         clean[key] = value.isoformat() if isinstance(value, datetime) else value
-    base = get_settings().bellweather_api_url
+    base = get_ui_settings().bellweather_api_url
     with httpx.Client(base_url=base, timeout=_TIMEOUT) as client:
         resp = client.get(path, params=clean)
         resp.raise_for_status()
