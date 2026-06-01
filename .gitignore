@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 infra/.terraform/
 *.tfstate*
+infra/.infracost/
