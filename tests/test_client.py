@@ -16,23 +16,39 @@ def _sub(key):
 
 
 def test_ingest_posts_and_parses(httpserver):
-    httpserver.expect_request("/ingest", method="POST").respond_with_json(
+    sub = _sub("c1")
+    expected_body = sub.model_dump(mode="json")
+    httpserver.expect_request("/ingest", method="POST", json=expected_body).respond_with_json(
         {"raw_record_id": 7, "status": "created", "payload_uri": "gs://b/x"}
     )
     c = BellwetherClient(base_url=httpserver.url_for(""))
-    r = c.ingest(_sub("c1"))
+    r = c.ingest(sub)
     assert r.raw_record_id == 7 and r.status == "created"
 
 
 def test_ingest_batch(httpserver):
-    httpserver.expect_request("/ingest/batch", method="POST").respond_with_json(
+    subs = [_sub("c1"), _sub("c2")]
+    expected_body = {"records": [s.model_dump(mode="json") for s in subs]}
+    httpserver.expect_request("/ingest/batch", method="POST", json=expected_body).respond_with_json(
         {
             "results": [
                 {"raw_record_id": 1, "status": "created", "payload_uri": "gs://b/1"},
-                {"raw_record_id": 1, "status": "duplicate", "payload_uri": "gs://b/1"},
+                {"raw_record_id": 2, "status": "duplicate", "payload_uri": "gs://b/2"},
             ]
         }
     )
     c = BellwetherClient(base_url=httpserver.url_for(""))
-    rs = c.ingest_batch([_sub("c1"), _sub("c1")])
+    rs = c.ingest_batch(subs)
     assert [r.status for r in rs] == ["created", "duplicate"]
+    assert [r.raw_record_id for r in rs] == [1, 2]
+
+
+def test_client_context_manager(httpserver):
+    sub = _sub("c1")
+    expected_body = sub.model_dump(mode="json")
+    httpserver.expect_request("/ingest", method="POST", json=expected_body).respond_with_json(
+        {"raw_record_id": 99, "status": "created", "payload_uri": "gs://b/z"}
+    )
+    with BellwetherClient(base_url=httpserver.url_for("")) as c:
+        r = c.ingest(sub)
+    assert r.raw_record_id == 99 and r.status == "created"

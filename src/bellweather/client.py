@@ -19,3 +19,12 @@ class BellwetherClient:
         resp = self._client.post(f"{self._base}/ingest/batch", json=body)
         resp.raise_for_status()
         return [IngestResult.model_validate(r) for r in resp.json()["results"]]
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
