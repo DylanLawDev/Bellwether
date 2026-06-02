@@ -1,0 +1,10 @@
+name        = "polymarket"
+entrypoint  = "producers.polymarket.producer:run"
+description = "Polymarket event price-history collector -> numeric-series-v1"
+
+[params]
+url      = { type = "str", required = true, help = "Polymarket event URL" }
+backfill = { type = "str", default = "all", choices = ["all", "recent"] }
+
+[schedule]
+default_interval = "30m"
