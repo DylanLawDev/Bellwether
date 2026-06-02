@@ -34,6 +34,15 @@ later without any screen changing.
     force_schedule(id)                 -> None   # one-shot force_run flag
     run_orchestrator_now()             -> dict[started_run_ids]
     preview_template(name, params)     -> dict[symbols, sample]   # dry-run, commits nothing
+    get_scrape_specs()                 -> DataFrame[id, name, description,
+                                                    fetch_adapter, llm_model, enabled]
+    get_scrape_spec(name)              -> dict   # full spec incl sites/output_schema/binding
+    create_scrape_spec(name, sites, output_schema, binding, *, description=None,
+                       fetch_adapter="httpx", llm_model=None) -> int
+    update_scrape_spec(name, **fields) -> None   # name|description|sites|output_schema|
+                                                 # binding|fetch_adapter|llm_model|enabled
+    delete_scrape_spec(name)           -> None
+    preview_scrape_spec(name, url=None) -> dict  # {extracted, symbols, sample, tags}; commits nothing
 """
 
 # Column contracts, importable by both backends and tests so the shapes stay in sync.
@@ -92,4 +101,15 @@ RUN_COLUMNS = [
     "status",
     "submitted",
     "error",
+]
+
+# Scrape-spec control plane (T41). `sites`/`output_schema`/`binding` are nested JSON
+# carried per-spec (like `params` on a schedule), not flat columns here.
+SCRAPE_SPEC_COLUMNS = [
+    "id",
+    "name",
+    "description",
+    "fetch_adapter",
+    "llm_model",
+    "enabled",
 ]

@@ -442,3 +442,116 @@ def preview_template(name, params) -> dict:
         "symbols": [f"{name}:demo"],
         "sample": [{"symbol_key": f"{name}:demo", "ts": _now_hour().isoformat(), "value": 0.5}],
     }
+
+
+# --- scrape-spec control plane (T41) ----------------------------------------
+# One fixture spec so the Scrape page lists + previews something offline. sites/
+# output_schema/binding are nested JSON carried per-spec (not SCRAPE_SPEC_COLUMNS).
+_SCRAPE_SPECS_STATE: list[dict] = [
+    {
+        "id": 1,
+        "name": "demo-prices",
+        "description": "Fixture scrape spec (offline demo).",
+        "sites": ["https://example.com/products/a", "https://example.com/products/b"],
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "price": {"type": "number"},
+                "title": {"type": "string"},
+                "in_stock": {"type": "boolean"},
+            },
+        },
+        "binding": {
+            "symbol_key": "scrape:prices:{title}",
+            "symbol_kind": "scraped-metric",
+            "value": "$.price",
+            "ts": "fetched_at",
+            "unit": "usd",
+            "tags": ["title", "in_stock"],
+        },
+        "fetch_adapter": "httpx",
+        "llm_model": None,
+        "enabled": True,
+    }
+]
+_NEXT_SCRAPE_ID = {"spec": 2}
+
+
+def _scrape_specs_frame() -> pd.DataFrame:
+    rows = [{c: s[c] for c in contract.SCRAPE_SPEC_COLUMNS} for s in _SCRAPE_SPECS_STATE]
+    return pd.DataFrame(rows, columns=contract.SCRAPE_SPEC_COLUMNS)
+
+
+def get_scrape_specs() -> pd.DataFrame:
+    return _scrape_specs_frame()
+
+
+def get_scrape_spec(name) -> dict | None:
+    for s in _SCRAPE_SPECS_STATE:
+        if s["name"] == name:
+            # deep-ish copy so callers can't mutate the fixture in place
+            return {
+                **s,
+                "sites": list(s["sites"]),
+                "output_schema": dict(s["output_schema"]),
+                "binding": dict(s["binding"]),
+            }
+    return None
+
+
+def create_scrape_spec(
+    name, sites, output_schema, binding, *, description=None, fetch_adapter="httpx", llm_model=None
+) -> int:
+    sid = _NEXT_SCRAPE_ID["spec"]
+    _NEXT_SCRAPE_ID["spec"] += 1
+    _SCRAPE_SPECS_STATE.append(
+        {
+            "id": sid,
+            "name": name,
+            "description": description,
+            "sites": list(sites),
+            "output_schema": dict(output_schema),
+            "binding": dict(binding),
+            "fetch_adapter": fetch_adapter,
+            "llm_model": llm_model,
+            "enabled": True,
+        }
+    )
+    return sid
+
+
+def update_scrape_spec(name, **fields) -> None:
+    allowed = {
+        "name",
+        "description",
+        "sites",
+        "output_schema",
+        "binding",
+        "fetch_adapter",
+        "llm_model",
+        "enabled",
+    }
+    for s in _SCRAPE_SPECS_STATE:
+        if s["name"] == name:
+            s.update({k: v for k, v in fields.items() if k in allowed})
+
+
+def delete_scrape_spec(name) -> None:
+    _SCRAPE_SPECS_STATE[:] = [s for s in _SCRAPE_SPECS_STATE if s["name"] != name]
+
+
+def preview_scrape_spec(name, url=None) -> dict:
+    # Deterministic dry-run shape (commits nothing). Mirrors the live API's
+    # ScrapePreviewResult: extracted JSON + would-be symbols/sample/tags.
+    return {
+        "extracted": {"price": 9.99, "title": "demo"},
+        "symbols": [f"scrape:prices:demo ({name})"],
+        "sample": [
+            {
+                "symbol_key": f"scrape:prices:demo ({name})",
+                "ts": _now_hour().isoformat(),
+                "value": 9.99,
+            }
+        ],
+        "tags": [{"tag_type": "title", "raw_value": "demo"}],
+    }
