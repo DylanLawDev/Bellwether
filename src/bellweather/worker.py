@@ -3,19 +3,45 @@ import time
 from psycopg.types.json import Jsonb
 
 import bellweather.extractors.gdelt_gkg  # noqa: F401  (registers the extractor)
+import bellweather.normalizers.numeric_series  # noqa: F401  (registers the normalizer)
 from bellweather.db import get_conn
 from bellweather.extractors import get_extractor
-from bellweather.gold import upsert_coverage
+from bellweather.gold import upsert_coverage, upsert_value
+from bellweather.normalizers import get_normalizer
 from bellweather.queue import Job, ack, fail, lease
 from bellweather.storage import get_bronze_store
 
 
 def process_job(conn, job: Job) -> None:
     row = conn.execute(
-        "select source, content_type, payload_uri, fetched_at from raw_records where id=%s",
+        "select source, kind, content_type, payload_uri, fetched_at from raw_records where id=%s",
         (job.raw_record_id,),
     ).fetchone()
-    source, content_type, payload_uri, fetched_at = row
+    source, kind, content_type, payload_uri, fetched_at = row
+
+    if kind == "structured":
+        normalizer = get_normalizer(content_type)
+        if normalizer is None:
+            conn.execute(
+                "update raw_records set status='unroutable' where id=%s", (job.raw_record_id,)
+            )
+            ack(conn, job.id)
+            return
+        envelope = get_bronze_store().get(payload_uri)
+        for pt in normalizer.normalize(envelope):
+            upsert_value(
+                conn,
+                pt.symbol_key,
+                pt.symbol_kind,
+                pt.ts,
+                pt.value,
+                unit=pt.unit,
+                description=pt.description,
+            )
+        conn.execute("update raw_records set status='processed' where id=%s", (job.raw_record_id,))
+        ack(conn, job.id)
+        return
+
     extractor = get_extractor(content_type)
     if extractor is None:
         conn.execute("update raw_records set status='unroutable' where id=%s", (job.raw_record_id,))
