@@ -51,7 +51,11 @@ def run_template(
     dry_run: bool = typer.Option(False, help="Capture submissions without sending"),
 ) -> None:
     """Run one template's entrypoint with validated params."""
+    import contextlib
+    from pathlib import Path
+
     from bellweather.client import BellwetherClient, DryRunClient
+    from bellweather.config import get_settings
     from bellweather.templates import get_template, load_entrypoint, validate_params
 
     tmpl = get_template(template)
@@ -62,10 +66,18 @@ def run_template(
     except ValueError as e:
         raise SystemExit(f"invalid params: {e}")
 
+    # Add templates dir to sys.path so template-local modules are importable.
+    templates_dir = str(Path(get_settings().bellweather_templates_dir).resolve())
+    if templates_dir not in sys.path:
+        sys.path.insert(0, templates_dir)
+
     entrypoint = load_entrypoint(tmpl.entrypoint)
     client = DryRunClient() if dry_run else BellwetherClient()
     try:
-        result = entrypoint(validated, client) or {}
+        # Redirect entrypoint stdout to stderr so template debug output does
+        # not contaminate the JSON summary line read by the orchestrator.
+        with contextlib.redirect_stdout(sys.stderr):
+            result = entrypoint(validated, client) or {}
     finally:
         client.close()
 
