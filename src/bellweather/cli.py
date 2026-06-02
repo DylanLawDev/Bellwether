@@ -51,11 +51,14 @@ def ui(port: int = 8501):
 GDELT_DEMO_NAME = "gdelt-demo"
 GDELT_DEMO_TEMPLATE = "gdelt"  # the name in producers/gdelt/template.toml (T28)
 
-# VERIFY against current GDELT docs (master file list, see producers/gdelt/README.md):
-#   http://data.gdeltproject.org/gdeltv2/masterfilelist.txt
-# A concrete GKG 2.1 *.gkg.csv batch URL. This is only a demo default — an operator
-# overrides it via the Schedules UI. seed-gdelt-demo writes the row; it never fetches.
-GDELT_DEMO_GKG_URL = "http://data.gdeltproject.org/gdeltv2/20260601000000.gkg.csv"
+# A bundled, plain-text GKG sample so the local go-live walkthrough actually
+# completes end-to-end out of the box (the producer's _fetch_lines reads plain
+# `.gkg.csv` and does NOT unzip). The live GDELT feed publishes only
+# `*.gkg.csv.zip` (master file list: http://data.gdeltproject.org/gdeltv2/masterfilelist.txt),
+# so a live batch must be downloaded + unzipped first and the schedule pointed at
+# the local file (or a reachable plain-csv URL) — override it via the Schedules UI.
+# seed-gdelt-demo only writes the row; it never fetches.
+GDELT_DEMO_GKG_URL = "tests/fixtures/gkg_sample.csv"
 GDELT_DEMO_INTERVAL_SECONDS = 15 * 60  # 15m default (GDELT publishes every 15 minutes)
 
 
