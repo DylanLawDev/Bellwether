@@ -65,7 +65,7 @@ spirit of academic and regulatory market-surveillance work.
 | Term | Definition |
 |---|---|
 | **Source** | An external origin of data (e.g. GDELT, Kalshi API, an RSS feed). |
-| **Collector** | An isolated, scheduled job that pulls from one source and emits raw records. |
+| **Collector** | An isolated job that pulls from one source and emits raw records. **(2026-06-01)** In practice these are **external scripts ("templates")** in a Git repo that **Bellwether's orchestrator schedules and calls with parameters**; they push to `/ingest` and never hold the spine's credentials. See `docs/specs/2026-06-01-producer-orchestrator-design.md`. |
 | **Raw record** | An immutable, provenance-stamped capture of source data (bronze layer). |
 | **Tag / Concept** | A structured signal *extracted* from unstructured content — entity, theme, keyword, sentiment. Open-vocabulary. |
 | **Metric** | A structured numerical value arriving already-quantified from a feed (e.g. contract price, traded volume). No extraction needed. |
@@ -122,7 +122,11 @@ flowchart LR
 
 1. **Collection** — one isolated, scheduled collector per source. Owns rate
    limits, auth, dedup, idempotency, and provenance. One collector breaking must
-   not affect the others.
+   not affect the others. **(2026-06-01)** Collectors are **external scripts
+   orchestrated by Bellwether**: the orchestrator loads templates from a Git repo
+   and runs them on a schedule with parameters; scripts push to `/ingest` with no
+   access to the spine's datastore
+   (`docs/specs/2026-06-01-producer-orchestrator-design.md`).
 2. **Ingestion** — a single decoupling entry point (queue/log) so producers can't
    overwhelm downstream, and so the stream is buffered and replayable.
 3. **Raw store (bronze)** — immutable, partitioned, append-only, cheap. The
@@ -199,6 +203,13 @@ Add a market collector (e.g. Kalshi) on the **structured path**: validate/normal
 contract prices and volumes into time series keyed to the same entity space, then
 extend the research layer to compute **news-vs-price divergence**. This is the
 milestone that delivers the actual use case.
+
+> **In progress (2026-06-01):** the structured *path* (a generic numeric normalizer,
+> value time series, `kind`-based worker routing) and the **producer orchestrator**
+> are being built first as reusable infrastructure
+> (`docs/specs/2026-06-01-producer-orchestrator-design.md`); Polymarket is the first
+> structured feed on top of it. The **news-vs-price divergence** research half remains
+> future work.
 
 > **Open sequencing decision:** v0 (single source, plumbing only) de-risks the
 > architecture but shows no value; a dual-source v0 (one news + one price feed)

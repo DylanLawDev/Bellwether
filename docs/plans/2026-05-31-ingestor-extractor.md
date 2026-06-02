@@ -1,6 +1,6 @@
 # Ingestor + Extractor Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build Bellwether's source-agnostic ingestion + extraction core — an HTTP front door, immutable GCS bronze store, durable Postgres work queue, pluggable extraction, and gold time-series aggregation — with GDELT as the first reference producer, deployable to GCP via Terraform.
 
@@ -17,7 +17,7 @@
 Each ticket under `docs/plans/tickets/` is **self-contained**: it names the spec, prerequisite tickets, exact files, interfaces, tests, and acceptance criteria. To dispatch one:
 
 1. Open the repo in Claude Code on the web.
-2. Tell it: *"Read `AGENTS.md`, then implement ticket `docs/plans/tickets/T03-bronze-store.md` end to end: work on a branch, follow TDD, run `make check`, and open a PR. Do not merge."*
+2. Tell it: *"Read `AGENTS.md`, then implement ticket `docs/plans/tickets/Closed/T03-bronze-store.md` end to end: work on a branch, follow TDD, run `make check`, and open a PR. Do not merge."*
 3. CI (GitHub Actions) runs `make check` on the PR. Review the diff + CI result from your phone and merge.
 
 **Conventions (also in `AGENTS.md`, created in T00) that every ticket relies on:**
@@ -98,24 +98,24 @@ T00 scaffold ─┬─▶ T01 config/db ─┬─▶ T02 migrations ─┬─▶
 
 | Ticket | Title | Depends on |
 |---|---|---|
-| [T00](tickets/T00-scaffold.md) | Repo scaffold, tooling, CI, local docker-compose, `AGENTS.md` | — |
-| [T01](tickets/T01-config-db.md) | Settings + Postgres connection pool | T00 |
-| [T02](tickets/T02-migrations.md) | Migration runner + initial schema (6 tables) | T01 |
-| [T03](tickets/T03-bronze-store.md) | GCS bronze store (emulator-aware) | T01 |
-| [T04](tickets/T04-contracts.md) | Ingestion contract models (`Submission`) | T00 |
-| [T05](tickets/T05-work-queue.md) | Durable work queue (lease/ack/fail) | T02 |
-| [T06](tickets/T06-ingest-core.md) | `ingest_record()` — bronze-first + dedup + enqueue | T03, T04, T05 |
-| [T07](tickets/T07-ingestion-api.md) | FastAPI `POST /ingest` (+ batch), `/healthz`, CLI | T06 |
-| [T08](tickets/T08-client.md) | Thin `BellwetherClient` (httpx) | T04, T07 |
-| [T09](tickets/T09-extractor-registry.md) | Extractor registry + `Extractor` protocol | T04 |
-| [T10](tickets/T10-gdelt-extractor.md) | GDELT GKG v2 extractor → `tags` | T09 |
-| [T11](tickets/T11-worker-gold.md) | Worker lease loop + gold aggregation | T05, T10 |
-| [T12](tickets/T12-gdelt-producer.md) | Reference GDELT producer (external script) | T08, T11 |
-| [T13](tickets/T13-terraform-gcp.md) | Terraform: GCS + Cloud SQL + Cloud Run + Scheduler | — (parallel) |
-| [T14](tickets/T14-cicd-deploy.md) | Dockerfile + GitHub Actions build/deploy | T07, T11, T13 |
-| [T15](tickets/T15-read-api.md) | Read API: GET endpoints for symbols/observations/records/tags/queue | T07, T11 |
-| [T16](tickets/T16-web-live-backend.md) | Wire `web.data.live` to the read API + `bellweather ui` CLI | T15 |
-| [T17](tickets/T17-single-app-deploy.md) | Package API + UI as one Cloud Run app | T14, T16 |
+| [T00](tickets/Closed/T00-scaffold.md) | Repo scaffold, tooling, CI, local docker-compose, `AGENTS.md` | — |
+| [T01](tickets/Closed/T01-config-db.md) | Settings + Postgres connection pool | T00 |
+| [T02](tickets/Closed/T02-migrations.md) | Migration runner + initial schema (6 tables) | T01 |
+| [T03](tickets/Closed/T03-bronze-store.md) | GCS bronze store (emulator-aware) | T01 |
+| [T04](tickets/Closed/T04-contracts.md) | Ingestion contract models (`Submission`) | T00 |
+| [T05](tickets/Closed/T05-work-queue.md) | Durable work queue (lease/ack/fail) | T02 |
+| [T06](tickets/Closed/T06-ingest-core.md) | `ingest_record()` — bronze-first + dedup + enqueue | T03, T04, T05 |
+| [T07](tickets/Closed/T07-ingestion-api.md) | FastAPI `POST /ingest` (+ batch), `/healthz`, CLI | T06 |
+| [T08](tickets/Closed/T08-client.md) | Thin `BellwetherClient` (httpx) | T04, T07 |
+| [T09](tickets/Closed/T09-extractor-registry.md) | Extractor registry + `Extractor` protocol | T04 |
+| [T10](tickets/Closed/T10-gdelt-extractor.md) | GDELT GKG v2 extractor → `tags` | T09 |
+| [T11](tickets/Closed/T11-worker-gold.md) | Worker lease loop + gold aggregation | T05, T10 |
+| [T12](tickets/Closed/T12-gdelt-producer.md) | Reference GDELT producer (external script) | T08, T11 |
+| [T13](tickets/Closed/T13-terraform-gcp.md) | Terraform: GCS + Cloud SQL + Cloud Run + Scheduler | — (parallel) |
+| [T14](tickets/Closed/T14-cicd-deploy.md) | Dockerfile + GitHub Actions build/deploy | T07, T11, T13 |
+| [T15](tickets/Closed/T15-read-api.md) | Read API: GET endpoints for symbols/observations/records/tags/queue | T07, T11 |
+| [T16](tickets/Closed/T16-web-live-backend.md) | Wire `web.data.live` to the read API + `bellweather ui` CLI | T15 |
+| [T17](tickets/Closed/T17-single-app-deploy.md) | Package API + UI as one Cloud Run app | T14, T16 |
 
 ---
 

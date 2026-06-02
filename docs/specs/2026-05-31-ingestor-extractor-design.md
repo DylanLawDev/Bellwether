@@ -8,6 +8,8 @@
 | **Scope** | The ingestion + extraction core (the first build epic). Research layer, entity resolution, and the structured market feed are out of scope here. |
 | **Related** | `README.md` (platform design doc) — §4 Architecture, §5.2 v0 spine, §6.4 provenance |
 
+> **Amended 2026-06-01** by `docs/specs/2026-06-01-producer-orchestrator-design.md` (the producer-orchestrator epic): **D1 evolves** — Bellwether now *orchestrates* external collector scripts (still unprivileged) — and the **structured-feed path that §10 deferred is now being built**. Inline amendments are flagged below.
+
 ---
 
 ## 1. Goal
@@ -27,7 +29,7 @@ front door — not just a GDELT-specific poller.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | **Scraping is external to Bellwether.** The tool never crawls or runs LLM agents. Producers (scripts, notebooks, LLM agents, file loaders) push to an HTTP ingestion point. | Keeps the core simple and robust; scraping concerns (auth, rate limits, navigation) stay out of the platform. The ingestion contract is the only coupling. |
+| D1 | **Scraping *logic* is external to Bellwether.** The core never crawls or runs LLM agents. Collection lives in external scripts that push to the HTTP ingestion point. **(Amended 2026-06-01: Bellwether now *orchestrates* those scripts — scheduling them and calling them with parameters; they stay unprivileged, holding only the ingest URL. This adds a second coupling, the template manifest. See `docs/specs/2026-06-01-producer-orchestrator-design.md`.)** | Keeps scraping concerns (auth, rate limits, navigation) out of the platform. The ingestion contract is the *data* coupling; the template manifest is the *orchestration* coupling. |
 | D2 | **Generic ingestor first, GDELT as the first collector.** | Matches README v0 spine but generalizes the front door so scrapers / custom-data loads are just more producers. |
 | D3 | **Ingestion entry = HTTP API (`POST /ingest`) + a thin Python client.** | Universal: any language/agent, local or remote, can produce. Validation happens at submit time. |
 | D4 | **Processing = durable Postgres-backed queue + a separate worker process.** | Decoupled + replayable (README §2, §6.4) without standing up Kafka. The queue table is the swap-point for Redpanda/Pub/Sub later. |
@@ -52,7 +54,7 @@ external producers ──HTTP──▶ │ Ingestion API │ ──▶ GCS bronz
                                           │  lease job → route by      │
                                           │  content_type:             │
                                           │   ├─ unstructured ▶ Extractor registry
-                                          │   └─ structured   ▶ Normalizer (stub in v0)
+                                          │   └─ structured   ▶ Normalizer (built: 2026-06-01 orchestrator epic)
                                           └─────────────┬─────────────┘
                                                         ▼
                                silver (PG: tags, entities)  +  gold (PG: tracked_symbols, observations)
@@ -229,9 +231,12 @@ store), so dev and prod run the identical code paths.
 
 ## 10. Out of scope (this epic)
 
-- The **structured market feed** (Kalshi/Polymarket) and **news-vs-price
-  divergence** (README §5.3, v1). The contract supports `kind=structured` and a
-  normalizer seam exists, but no structured extractor ships here.
+- The **news-vs-price divergence** comparison (README §5.3, v1) remains out of scope.
+  **Amended 2026-06-01:** the **structured feed *path*** itself (generic numeric
+  normalizer, value time series, `kind`-based worker routing) is **no longer deferred** —
+  it is built in the producer-orchestrator epic
+  (`docs/specs/2026-06-01-producer-orchestrator-design.md`), with Polymarket as the first
+  structured feed. Only the *comparison/divergence analysis* stays out of scope here.
 - **Bespoke NLP** beyond borrowed GDELT tags (README §7).
 - **Entity resolution / synonym collapse** and the **tag→tracked-symbol promotion
   criterion** (README §6.1) — tables exist; the logic is a later epic.
