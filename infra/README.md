@@ -48,9 +48,19 @@ front of the pipe), exactly as the worker drains the **queue** (the back). It is
 reusing the `bellweather-scheduler` SA.
 
 Each tick reads due `producer_schedules`, claims them, and spawns each template as a
-**subprocess** with only `BELLWEATHER_API_URL` (the in-project `bellweather-api` URL, D2) —
-**never** the DB or bucket creds (K4). The orchestrator itself needs `DATABASE_URL` (to read
-the schedule registry and record `producer_runs`); the scripts it spawns do not.
+**subprocess** with a minimal env — `BELLWEATHER_API_URL` (the in-project `bellweather-api`
+URL, D2), the templates dir, and `PATH`/`PYTHONPATH`, but **never** `DATABASE_URL` or
+`BELLWEATHER_BUCKET` (K4). The orchestrator itself needs `DATABASE_URL` (to read the schedule
+registry and record `producer_runs`); the scripts it spawns do not.
+
+**Caveat — this is env-level isolation, not a sandbox.** The subprocess shares the Job's
+runtime service account, so its Application Default Credentials (via the metadata server)
+still carry that SA's `storage.objectAdmin` + `secretmanager.secretAccessor` grants. Stripping
+env vars stops accidental/incidental use of the spine creds, but a spawned script that
+deliberately reaches for ADC can still hit GCS/Secret Manager. True isolation (a least-priv
+per-producer SA, or gVisor/nsjail + egress limits, design §12) is deferred hardening; the K4
+guarantee here is "no DB/bucket creds *handed to* the script," not a security boundary against
+hostile template code.
 
 The template manifests + scripts are **baked into the image**: the `Dockerfile` does
 `COPY producers ./producers` and sets `BELLWEATHER_TEMPLATES_DIR=/app/producers`, so

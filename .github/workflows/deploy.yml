@@ -81,3 +81,8 @@ jobs:
         run: gcloud run services update $SERVICE --region "$REGION" --image "$IMAGE"
       - name: Deploy worker job
         run: gcloud run jobs update $JOB --region "$REGION" --image "$IMAGE"
+      - name: Deploy orchestrator job
+        # The orchestrator Job runs `bellweather orchestrate --once` (T27). Without
+        # this step it stays pinned to the bootstrap image and the minute scheduler
+        # invokes a command that image doesn't have.
+        run: gcloud run jobs update bellweather-orchestrator --region "$REGION" --image "$IMAGE"
