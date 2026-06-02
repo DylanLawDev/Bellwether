@@ -91,3 +91,55 @@ BELLWEATHER_TEMPLATES_DIR=producers \
 
 The summary line reports `submitted` (one per GKG row) and a `sample` of the
 would-be submissions; nothing is committed and no HTTP is made (`DryRunClient`).
+
+## Go-live: run it under the orchestrator
+
+The orchestrator (T24) can run this producer on a schedule instead of you invoking
+it by hand. The `gdelt` template manifest (`producers/gdelt/template.toml`, T28)
+declares the entrypoint and params; a **schedule** binds it to a concrete GKG
+source (a URL or local path) and a 15-minute interval. `BELLWEATHER_TEMPLATES_DIR`
+defaults to `producers`, so the manifest is discovered automatically.
+
+`seed-gdelt-demo` binds the schedule to the bundled plain-text sample
+(`tests/fixtures/gkg_sample.csv`) rather than a live URL — the producer reads plain
+`.gkg.csv` and does **not** unzip, while the live GDELT feed serves only
+`*.gkg.csv.zip` (see "Live feed" above). That makes the walkthrough below complete
+out of the box without network access or zip handling. To run it against real data,
+download a `*.gkg.csv.zip` from the master file list, unzip it, and point the schedule
+at the local file (or a reachable plain-csv URL) via the Schedules UI's edit/override.
+
+Seed the demo schedule and drive one full pass locally (run from the repo root, so
+the relative sample path resolves):
+
+```bash
+make up                          # Postgres 16 + fake-gcs-server
+bellweather migrate              # applies 0001 + 0002 (creates producer_schedules)
+bellweather seed-gdelt-demo            # inserts the 'gdelt-demo' schedule bound to the bundled sample (idempotent — safe to re-run)
+
+# In a second terminal, start the ingest API the producer POSTs to:
+bellweather api                  # http://localhost:8000  (BELLWEATHER_API_URL)
+
+# Front of the pipe: the orchestrator finds the due 'gdelt-demo' schedule,
+# spawns the gdelt template in a subprocess (BELLWEATHER_API_URL only — no DB/bucket
+# creds), which reads the GKG batch and POSTs each row to /ingest (bronze + queue):
+bellweather orchestrate --once
+
+# Back of the pipe: the worker drains the queue, routes the unstructured records to
+# the gdelt-gkg-v2 extractor, and writes tags (silver) + observations (gold):
+bellweather worker --once
+```
+
+Then open the UI (`bellweather ui`):
+- **Schedules** page lists `gdelt-demo` (template `gdelt`, 15m interval, enabled) and its run
+  history; use **Run now** / **Force Run** to trigger another pass without waiting for the interval.
+- **Dashboard** shows the new tags and the observations the extractor wrote.
+
+`seed-gdelt-demo` is idempotent (it skips if a schedule named `gdelt-demo` already exists), so it is
+safe to run on every deploy. In GCP the every-minute Cloud Scheduler ping drives `orchestrate`
+and `worker` automatically; you only seed once.
+
+> ⚠ The seeded schedule points at the **bundled local sample**, which exists in the repo/dev
+> checkout but **not** in the deployed Cloud Run image. It demonstrates the local end-to-end pass;
+> it does not pull live data. For a real feed, override the schedule's source from the Schedules UI
+> with a reachable plain-`.gkg.csv` URL (or a downloaded + unzipped batch from the master file list
+> above) — the producer does not unzip `*.gkg.csv.zip`.
