@@ -3,6 +3,7 @@ import time
 from psycopg.types.json import Jsonb
 
 import bellweather.extractors.gdelt_gkg  # noqa: F401  (registers the extractor)
+import bellweather.extractors.scrape_llm  # noqa: F401  (registers the extractor)
 import bellweather.normalizers.numeric_series  # noqa: F401  (registers the normalizer)
 from bellweather.db import get_conn
 from bellweather.extractors import ExtractionResult, get_extractor
