@@ -86,15 +86,27 @@ env var sourced from that secret via `value_source.secret_key_ref`. **Unlike `DA
 the `secretAccessor` grant is scoped to the runtime SA *only*** — the orchestrator runs as a
 separate SA (see below) that is deliberately *not* granted this secret.
 
-It is mounted on **only two surfaces — the trusted spine** (K1/K9):
+It is mounted on **exactly one surface** (K1/K9):
 
 | surface | why it needs the key |
 | ------- | -------------------- |
 | `bellweather-worker` Job | runs `LlmScrapeExtractor` (`scrape-llm-v1`) — the real extraction |
-| `bellweather-api` service | runs the in-process **dry-run preview** (`POST /api/scrape-specs/{name}/preview`) |
 
-Both run as the **runtime SA**, which is the only identity granted `secretAccessor` on the
+The worker runs as the **runtime SA**, the only identity granted `secretAccessor` on the
 Anthropic secret.
+
+**The public `bellweather-api` service does NOT carry the key** (PR #48, comment
+3344829117). The service runs as the runtime SA, but the `ANTHROPIC_API_KEY` env var is
+deliberately omitted, and the API reads the key only from its injected env (never via
+ADC/Secret Manager at runtime — see `src/bellweather/llm.py`), so the omission alone fully
+gates the API's access. The motive is a credit-drain vector: the in-process dry-run preview
+(`POST /api/scrape-specs/{name}/preview`, K10/T39) is an **unauthenticated, public** endpoint,
+so without the env var an attacker could otherwise burn Anthropic credits at will. The
+maintainer accepted the tradeoff that **the preview route is therefore disabled in prod**:
+`config.anthropic_api_key` is `Optional`, so the service still boots, and `LlmExtractor` raises
+a clear `RuntimeError` (a graceful preview error, not a deploy failure) when the route is hit.
+Re-enabling preview on the public API is deferred to a follow-up ticket that puts an
+auth/rate-limit boundary in front of it.
 
 The **orchestrator Job and the scrape collector it spawns do NOT get the key** (K1/K4/D-e). This
 is enforced at the **IAM level, not just by omitting the env var**: the orchestrator runs as a

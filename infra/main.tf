@@ -89,13 +89,19 @@ resource "google_secret_manager_secret_iam_member" "orchestrator_db_url_access" 
 
 # --- ANTHROPIC_API_KEY secret (LLM scrape engine, T42) ---
 # Mirrors the DATABASE_URL secret trio. The key is the first paid RUNTIME
-# dependency (design D-b) and lives ONLY in the trusted spine: the worker Job
-# (runs LlmScrapeExtractor, T38) and the api service (in-process dry-run
-# preview, T39), both of which run as the runtime SA. The orchestrator runs as a
-# SEPARATE SA (google_service_account.orchestrator) that is NOT granted this
-# secret, so neither the orchestrator nor the collector it spawns can read the
-# key via ADC — env-var omission alone is insufficient because Cloud Run ADC is
-# ambient via the metadata server (K1/K4 — the LLM runs worker-side).
+# dependency (design D-b) and is mounted ONLY on the worker Job (runs
+# LlmScrapeExtractor, T38). It is deliberately NOT mounted on the public API
+# service: that route would expose the in-process preview (T39/K10) on an
+# unauthenticated endpoint, a credit-drain vector (PR #48, comment 3344829117).
+# The runtime SA still holds secretAccessor on this secret because the worker
+# runs AS the runtime SA; the env-var omission on the API service is what gates
+# the API's access, since the API reads the key only from its injected env (not
+# via ADC/Secret Manager at runtime — see src/bellweather/llm.py).
+# The orchestrator runs as a SEPARATE SA (google_service_account.orchestrator)
+# that is NOT granted this secret, so neither the orchestrator nor the collector
+# it spawns can read the key via ADC — for that path env-var omission alone is
+# insufficient because Cloud Run ADC is ambient via the metadata server
+# (K1/K4 — the LLM runs worker-side).
 resource "google_secret_manager_secret" "anthropic_key" {
   secret_id = "bellweather-anthropic-api-key"
   replication {
@@ -109,8 +115,10 @@ resource "google_secret_manager_secret_version" "anthropic_key" {
   secret_data = var.anthropic_api_key
 }
 
-# Granted ONLY to the runtime SA (api + worker — the trusted spine). The
-# orchestrator SA is intentionally excluded so spawned templates cannot read it.
+# Granted ONLY to the runtime SA, which is the identity the worker Job runs as
+# (the worker is the sole runtime consumer of the key). The API service also runs
+# as the runtime SA but is NOT given the key as an env var, so it cannot reach it.
+# The orchestrator SA is intentionally excluded so spawned templates cannot read it.
 resource "google_secret_manager_secret_iam_member" "anthropic_key_access" {
   secret_id = google_secret_manager_secret.anthropic_key.id
   role      = "roles/secretmanager.secretAccessor"
@@ -181,23 +189,21 @@ resource "google_cloud_run_v2_service" "api" {
           }
         }
       }
-      env {
-        name = "ANTHROPIC_API_KEY"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.anthropic_key.secret_id
-            version = "latest"
-          }
-        }
-      }
+      # NOTE: ANTHROPIC_API_KEY is deliberately NOT mounted on the public API
+      # service. The key is scoped to the worker Job ONLY (below). Per maintainer
+      # decision (PR #48, comment 3344829117), keeping the LLM key off the public,
+      # unauthenticated API closes a credit-drain vector: anyone could otherwise
+      # hammer the in-process /api/scrape-specs/{name}/preview route (K10/T39) and
+      # burn Anthropic credits. The tradeoff is that the preview route is disabled
+      # in prod (it returns a "key not configured" error, not a 500 — the key is
+      # Optional in config.py so the service still boots) until a follow-up ticket
+      # adds an auth/rate-limit boundary in front of it.
     }
   }
   depends_on = [
     google_project_service.apis,
     google_secret_manager_secret_version.db_url,
     google_secret_manager_secret_iam_member.db_url_access,
-    google_secret_manager_secret_version.anthropic_key,
-    google_secret_manager_secret_iam_member.anthropic_key_access,
   ]
 }
 
