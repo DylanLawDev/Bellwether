@@ -19,7 +19,7 @@ uv run python -m producers.gdelt.producer http://data.gdeltproject.org/gdeltv2/2
 The script prints a one-line summary of `IngestResult` statuses
 (`created` / `duplicate` / `unroutable`). The target API is taken from
 `BELLWEATHER_API_URL` (via `get_settings()`); construct
-`BellwetherClient(base_url=...)` and pass it to `run(...)` to override.
+`BellwetherClient(base_url=...)` and pass it to `run_path(...)` to override.
 
 ## Live feed
 
@@ -63,3 +63,31 @@ name). Verified canonical
 | 15    | V1.5Tone                 | `v15_tone`         |
 
 `v15_tone` is kept as the raw comma list; the first value is the overall tone.
+
+## As an orchestrator template
+
+`producers/gdelt/template.toml` registers this producer with the Bellwether
+orchestrator (`docs/specs/2026-06-01-producer-orchestrator-design.md` §4). The
+manifest declares one parameter, `url` (a GKG file URL or local path — a
+master-file entry), and a default schedule interval of `15m` (GDELT publishes a
+new GKG batch every 15 minutes).
+
+The template entrypoint is `run(params, client)` (the locked
+`def run(params: dict, client) -> dict | None` contract); the older
+`run_path(path_or_url, client=None)` helper is what the `python -m` CLI above
+uses. GDELT is an **unstructured** feed — submissions keep
+`content_type="gdelt-gkg-v2"` and flow to the existing extractor (themes /
+persons / orgs / locations / tone → tags); it does **not** emit
+`numeric-series-v1`.
+
+Dry-run it through the run-harness without any datastore (points the harness at
+this repo's `producers/` dir and uses a local GKG file, so no network call):
+
+```bash
+BELLWEATHER_TEMPLATES_DIR=producers \
+  uv run bellweather run-template --template gdelt --dry-run \
+  --params '{"url": "tests/fixtures/gkg_sample.csv"}'
+```
+
+The summary line reports `submitted` (one per GKG row) and a `sample` of the
+would-be submissions; nothing is committed and no HTTP is made (`DryRunClient`).

@@ -1,0 +1,9 @@
+name        = "gdelt"
+entrypoint  = "producers.gdelt.producer:run"
+description = "GDELT GKG 2.1 collector (unstructured): fetch a GKG batch, parse to gdelt-gkg-v2 payloads, submit."
+
+[params]
+url = { type = "str", required = true, help = "GKG file URL or local path (a master-file entry, e.g. http://data.gdeltproject.org/gdeltv2/<ts>.gkg.csv)" }
+
+[schedule]
+default_interval = "15m"   # GDELT publishes a new GKG batch every 15 minutes

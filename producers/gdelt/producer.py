@@ -99,8 +99,27 @@ def _default_client() -> BellwetherClient:
     return BellwetherClient(base_url=os.environ.get("BELLWEATHER_API_URL", "http://localhost:8000"))
 
 
-def run(path_or_url: str, client: BellwetherClient | None = None) -> list[IngestResult]:
-    """Fetch a GKG batch, normalize it, and ingest via the Bellwether client."""
+def run(params: dict, client) -> dict:
+    """Orchestrator template entrypoint (manifest: producers/gdelt/template.toml).
+
+    Wraps the existing fetch+parse logic in the locked entrypoint contract
+    ``def run(params: dict, client) -> dict | None``. ``params["url"]`` is a GKG
+    file URL or local path (a master-file entry); ``client`` is injected by the
+    run-harness (a real ``BellwetherClient`` on a scheduled run, a ``DryRunClient``
+    for a preview). GDELT stays UNSTRUCTURED (``content_type="gdelt-gkg-v2"``),
+    handled by the existing extractor — no numeric-series-v1 here.
+    """
+    subs = rows_to_submissions(_fetch_lines(params["url"]))
+    results = client.ingest_batch(subs)
+    return {"submitted": len(results)}
+
+
+def run_path(path_or_url: str, client: BellwetherClient | None = None) -> list[IngestResult]:
+    """Fetch a GKG batch, normalize it, and ingest via the Bellwether client.
+
+    Manual/CLI helper (used by ``__main__`` below). The orchestrator template
+    entrypoint is ``run(params, client)``.
+    """
     client = client or _default_client()
     subs = rows_to_submissions(_fetch_lines(path_or_url))
     return client.ingest_batch(subs)
@@ -110,7 +129,7 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("usage: python -m producers.gdelt.producer <path-or-url>", file=sys.stderr)
         raise SystemExit(2)
-    results = run(sys.argv[1])
+    results = run_path(sys.argv[1])
     by_status: dict[str, int] = {}
     for r in results:
         by_status[r.status] = by_status.get(r.status, 0) + 1
