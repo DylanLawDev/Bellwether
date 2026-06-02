@@ -48,6 +48,42 @@ def ui(port: int = 8501):
     st_cli.main()
 
 
+GDELT_DEMO_NAME = "gdelt-demo"
+GDELT_DEMO_TEMPLATE = "gdelt"  # the name in producers/gdelt/template.toml (T28)
+
+# VERIFY against current GDELT docs (master file list, see producers/gdelt/README.md):
+#   http://data.gdeltproject.org/gdeltv2/masterfilelist.txt
+# A concrete GKG 2.1 *.gkg.csv batch URL. This is only a demo default — an operator
+# overrides it via the Schedules UI. seed-gdelt-demo writes the row; it never fetches.
+GDELT_DEMO_GKG_URL = "http://data.gdeltproject.org/gdeltv2/20260601000000.gkg.csv"
+GDELT_DEMO_INTERVAL_SECONDS = 15 * 60  # 15m default (GDELT publishes every 15 minutes)
+
+
+@app.command("seed-gdelt-demo")
+def seed_demo() -> None:
+    """Idempotently seed the gdelt-demo producer schedule (Phase-2 go-live)."""
+    from bellweather import schedules
+    from bellweather.db import get_conn
+
+    with get_conn() as conn:
+        existing = [s for s in schedules.list_schedules(conn) if s["name"] == GDELT_DEMO_NAME]
+        if existing:
+            typer.echo(
+                f"skip: schedule {GDELT_DEMO_NAME!r} already exists (id={existing[0]['id']})"
+            )
+            return
+        sid = schedules.create_schedule(
+            conn,
+            name=GDELT_DEMO_NAME,
+            template=GDELT_DEMO_TEMPLATE,
+            params={"url": GDELT_DEMO_GKG_URL},
+            interval_seconds=GDELT_DEMO_INTERVAL_SECONDS,
+            enabled=True,
+        )
+        conn.commit()
+        typer.echo(f"created: schedule {GDELT_DEMO_NAME!r} (id={sid})")
+
+
 SAMPLE_LIMIT = 20  # dry-run shows at most this many would-be submissions
 
 
