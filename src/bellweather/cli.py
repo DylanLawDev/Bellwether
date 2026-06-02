@@ -52,10 +52,8 @@ def run_template(
 ) -> None:
     """Run one template's entrypoint with validated params."""
     import contextlib
-    from pathlib import Path
 
     from bellweather.client import BellwetherClient, DryRunClient
-    from bellweather.config import get_settings
     from bellweather.templates import get_template, load_entrypoint, validate_params
 
     tmpl = get_template(template)
@@ -65,11 +63,6 @@ def run_template(
         validated = validate_params(tmpl, json.loads(params))
     except ValueError as e:
         raise SystemExit(f"invalid params: {e}")
-
-    # Add templates dir to sys.path so template-local modules are importable.
-    templates_dir = str(Path(get_settings().bellweather_templates_dir).resolve())
-    if templates_dir not in sys.path:
-        sys.path.insert(0, templates_dir)
 
     entrypoint = load_entrypoint(tmpl.entrypoint)
     client = DryRunClient() if dry_run else BellwetherClient()
