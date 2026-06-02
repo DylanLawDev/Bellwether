@@ -28,6 +28,13 @@ def worker(once: bool = False):
 
 
 @app.command()
+def orchestrate(once: bool = False):
+    from bellweather.orchestrator import run_orchestrator
+
+    run_orchestrator(once=once)
+
+
+@app.command()
 def ui(port: int = 8501):
     """Launch the Streamlit web UI (needs the `ui` dependency group)."""
     from pathlib import Path
