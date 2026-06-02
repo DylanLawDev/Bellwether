@@ -1,3 +1,4 @@
 project_id  = "your-gcp-project"
 region      = "us-central1"
 bucket_name = "your-unique-bellweather-bronze"
+# anthropic_api_key = "sk-ant-..."   # optional; stored in the bellweather-anthropic-api-key secret. Leave unset to apply without it.

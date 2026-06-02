@@ -10,7 +10,7 @@ One `terraform apply` stands up the whole GCP baseline:
 - the **orchestrator** as a Cloud Run Job (`bellweather orchestrate --once`),
 - a **Cloud Scheduler** trigger that runs the worker job every minute to drain the queue,
 - a **Cloud Scheduler** trigger that runs the orchestrator job every minute to fire due schedules,
-- a runtime **service account** + IAM, and a **Secret Manager** secret holding `DATABASE_URL`.
+- a runtime **service account** + IAM, and **Secret Manager** secrets holding `DATABASE_URL` and `ANTHROPIC_API_KEY`.
 
 ## The combined Cloud Run service (T17)
 
@@ -53,14 +53,17 @@ URL, D2), the templates dir, and `PATH`/`PYTHONPATH`, but **never** `DATABASE_UR
 `BELLWEATHER_BUCKET` (K4). The orchestrator itself needs `DATABASE_URL` (to read the schedule
 registry and record `producer_runs`); the scripts it spawns do not.
 
-**Caveat — this is env-level isolation, not a sandbox.** The subprocess shares the Job's
-runtime service account, so its Application Default Credentials (via the metadata server)
-still carry that SA's `storage.objectAdmin` + `secretmanager.secretAccessor` grants. Stripping
-env vars stops accidental/incidental use of the spine creds, but a spawned script that
-deliberately reaches for ADC can still hit GCS/Secret Manager. True isolation (a least-priv
-per-producer SA, or gVisor/nsjail + egress limits, design §12) is deferred hardening; the K4
-guarantee here is "no DB/bucket creds *handed to* the script," not a security boundary against
-hostile template code.
+**Caveat — env-level isolation is not a full sandbox.** The subprocess shares the Job's service
+account, so its Application Default Credentials (via the metadata server) carry whatever that SA
+is granted — stripping env vars stops accidental use of those creds, but a script that
+deliberately reaches for ADC can still hit anything the SA can. Because of this, the orchestrator
+runs as its **own** `bellweather-orchestrator` SA (separate from the `bellweather-runtime` SA the
+api/worker use), granted **only** `DATABASE_URL`'s `secretAccessor` — **not** the bronze bucket
+and **not** the Anthropic LLM key. So a spawned template's worst-case ADC reach is the
+`DATABASE_URL` secret, never GCS or the paid LLM key (T42, K1/K4). Tightening even that last
+grant (a least-priv per-producer SA, or gVisor/nsjail + egress limits, design §12) is deferred
+hardening; the guarantee today is "no DB/bucket/LLM creds *handed to* the script, and the
+spawner's SA can reach neither bronze nor the LLM key via ADC."
 
 The template manifests + scripts are **baked into the image**: the `Dockerfile` does
 `COPY producers ./producers` and sets `BELLWEATHER_TEMPLATES_DIR=/app/producers`, so
@@ -72,6 +75,57 @@ tick (D3) instead of waiting for the minute scheduler.
 
 **Cost:** one more tiny scheduled Job — it scales to zero between ticks, so it adds no
 always-on cost. Cloud SQL still dominates; the project stays in the `<$40/mo` envelope.
+
+## The LLM scrape engine secret (T42)
+
+The schema-driven scrape engine (`docs/specs/2026-06-01-llm-scrape-engine-design.md`) calls
+Anthropic's API — the **first paid runtime dependency** (D-b). The key is wired like
+`DATABASE_URL`: a `bellweather-anthropic-api-key` Secret Manager secret (`+ version`, fed from
+`var.anthropic_api_key`), a `secretmanager.secretAccessor` grant, and an `ANTHROPIC_API_KEY`
+env var sourced from that secret via `value_source.secret_key_ref`. **Unlike `DATABASE_URL`,
+the `secretAccessor` grant is scoped to the runtime SA *only*** — the orchestrator runs as a
+separate SA (see below) that is deliberately *not* granted this secret.
+
+It is mounted on **exactly one surface** (K1/K9):
+
+| surface | why it needs the key |
+| ------- | -------------------- |
+| `bellweather-worker` Job | runs `LlmScrapeExtractor` (`scrape-llm-v1`) — the real extraction |
+
+The worker runs as the **runtime SA**, the only identity granted `secretAccessor` on the
+Anthropic secret.
+
+**The public `bellweather-api` service does NOT carry the key** (PR #48, comment
+3344829117). The service runs as the runtime SA, but the `ANTHROPIC_API_KEY` env var is
+deliberately omitted, and the API reads the key only from its injected env (never via
+ADC/Secret Manager at runtime — see `src/bellweather/llm.py`), so the omission alone fully
+gates the API's access. The motive is a credit-drain vector: the in-process dry-run preview
+(`POST /api/scrape-specs/{name}/preview`, K10/T39) is an **unauthenticated, public** endpoint,
+so without the env var an attacker could otherwise burn Anthropic credits at will. The
+maintainer accepted the tradeoff that **the preview route is therefore disabled in prod**:
+`config.anthropic_api_key` is `Optional`, so the service still boots, and `LlmExtractor` raises
+a clear `RuntimeError` (a graceful preview error, not a deploy failure) when the route is hit.
+Re-enabling preview on the public API is deferred to a follow-up ticket that puts an
+auth/rate-limit boundary in front of it.
+
+The **orchestrator Job and the scrape collector it spawns do NOT get the key** (K1/K4/D-e). This
+is enforced at the **IAM level, not just by omitting the env var**: the orchestrator runs as a
+dedicated `bellweather-orchestrator` SA that holds `DATABASE_URL` but is never granted the
+Anthropic secret. Env-var omission alone would be insufficient — on Cloud Run, ADC is ambient
+(reachable via the metadata server regardless of the minimal child env), so a spawned template
+could otherwise read the secret directly from Secret Manager. The collector runs unprivileged,
+reads its spec via the API, and only fetches each site (httpx, no secret) and `POST /ingest`s the
+raw page — the LLM step happens later, worker-side. No new Cloud Run Job is added; the collector
+ships in the existing `producers/` image bake (T27), so no `Dockerfile` change is needed.
+
+`var.anthropic_api_key` is **optional** (defaults to `""`): the baseline applies without it, then
+the real key is dropped into the secret later (add a new secret version, or pass
+`-var anthropic_api_key=sk-ant-...`). Until set, `LlmExtractor` raises a clear `RuntimeError` and
+no scrape extraction succeeds — fetch/ingest/GDELT paths are unaffected.
+
+**Cost:** the secret itself is free; the per-call Anthropic spend is the D-b cost flag — held in
+budget by the cheap default model (Haiku) and low cadence. Cloud SQL still dominates the
+`<$40/mo` envelope.
 
 ## Prerequisites
 
