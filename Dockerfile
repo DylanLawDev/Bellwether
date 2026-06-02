@@ -17,6 +17,12 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
+# Bake the collector-scripts repo (template manifests + scripts) into the image so the
+# orchestrator can discover and spawn them (T27). BELLWEATHER_TEMPLATES_DIR points the
+# template registry (templates.discover_templates) at this baked-in dir; default is the
+# repo's own `producers/`, so the demo runs without an external repo (design §7).
+COPY producers ./producers
+ENV BELLWEATHER_TEMPLATES_DIR=/app/producers
 # Install the pipeline AND the `ui` group: Streamlit is a RUNTIME dependency of
 # this combined image (it serves the operator UI), not just a local-dev tool.
 RUN uv pip install --system --no-cache --group ui .

@@ -7,7 +7,9 @@ One `terraform apply` stands up the whole GCP baseline:
 - an **Artifact Registry** Docker repo,
 - the **combined UI + API** on a single Cloud Run service (see below),
 - the **worker** as a Cloud Run Job (`bellweather worker --once`),
+- the **orchestrator** as a Cloud Run Job (`bellweather orchestrate --once`),
 - a **Cloud Scheduler** trigger that runs the worker job every minute to drain the queue,
+- a **Cloud Scheduler** trigger that runs the orchestrator job every minute to fire due schedules,
 - a runtime **service account** + IAM, and a **Secret Manager** secret holding `DATABASE_URL`.
 
 ## The combined Cloud Run service (T17)
@@ -36,6 +38,30 @@ Streamlit's headroom; the service still scales to zero, so cost stays in-envelop
 `bellweather worker --once` — the Job overrides the container `command`, so it
 bypasses the supervisor entrypoint and never starts Caddy/Streamlit. The migrate
 Job (in CI) does the same with `bellweather migrate`.
+
+## The orchestrator Job (T27)
+
+A third small scheduled process — `bellweather-orchestrator` — drives **producers** (the
+front of the pipe), exactly as the worker drains the **queue** (the back). It is a Cloud Run
+**Job** running `bellweather orchestrate --once`, pinged every minute by the
+`bellweather-orchestrate` scheduler — the same OAuth-invoke pattern as the worker drain,
+reusing the `bellweather-scheduler` SA.
+
+Each tick reads due `producer_schedules`, claims them, and spawns each template as a
+**subprocess** with only `BELLWEATHER_API_URL` (the in-project `bellweather-api` URL, D2) —
+**never** the DB or bucket creds (K4). The orchestrator itself needs `DATABASE_URL` (to read
+the schedule registry and record `producer_runs`); the scripts it spawns do not.
+
+The template manifests + scripts are **baked into the image**: the `Dockerfile` does
+`COPY producers ./producers` and sets `BELLWEATHER_TEMPLATES_DIR=/app/producers`, so
+`templates.discover_templates()` resolves in-container without an external repo (design §7).
+
+The runtime SA (which the API service runs as) is granted `run.invoker` on the orchestrator
+Job, so the UI's **Run now** button (POST `/api/orchestrator/run`) can trigger an immediate
+tick (D3) instead of waiting for the minute scheduler.
+
+**Cost:** one more tiny scheduled Job — it scales to zero between ticks, so it adds no
+always-on cost. Cloud SQL still dominates; the project stays in the `<$40/mo` envelope.
 
 ## Prerequisites
 
