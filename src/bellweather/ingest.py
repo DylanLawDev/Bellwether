@@ -11,7 +11,7 @@ from bellweather.storage import get_bronze_store
 # the ingest/API process doesn't import the extractors package (and its heavier
 # deps); the worker imports them and has a defensive `unroutable` fallback if the
 # two ever diverge.
-KNOWN_CONTENT_TYPES: set[str] = {"gdelt-gkg-v2", "numeric-series-v1"}
+KNOWN_CONTENT_TYPES: set[str] = {"gdelt-gkg-v2", "numeric-series-v1", "scrape-llm-v1"}
 
 
 def ingest_record(sub: Submission) -> IngestResult:
