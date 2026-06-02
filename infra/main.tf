@@ -67,6 +67,31 @@ resource "google_secret_manager_secret_iam_member" "db_url_access" {
   member    = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+# --- ANTHROPIC_API_KEY secret (LLM scrape engine, T42) ---
+# Mirrors the DATABASE_URL secret trio. The key is the first paid RUNTIME
+# dependency (design D-b) and lives ONLY in the trusted spine: the worker Job
+# (runs LlmScrapeExtractor, T38) and the api service (in-process dry-run
+# preview, T39). The orchestrator Job and the collector it spawns never get it
+# (K1/K4 — the collector only fetches + POSTs the raw page; the LLM runs worker-side).
+resource "google_secret_manager_secret" "anthropic_key" {
+  secret_id = "bellweather-anthropic-api-key"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "anthropic_key" {
+  secret      = google_secret_manager_secret.anthropic_key.id
+  secret_data = var.anthropic_api_key
+}
+
+resource "google_secret_manager_secret_iam_member" "anthropic_key_access" {
+  secret_id = google_secret_manager_secret.anthropic_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 locals {
   common_env = {
     BELLWEATHER_BUCKET     = google_storage_bucket.bronze.name
@@ -131,12 +156,23 @@ resource "google_cloud_run_v2_service" "api" {
           }
         }
       }
+      env {
+        name = "ANTHROPIC_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.anthropic_key.secret_id
+            version = "latest"
+          }
+        }
+      }
     }
   }
   depends_on = [
     google_project_service.apis,
     google_secret_manager_secret_version.db_url,
     google_secret_manager_secret_iam_member.db_url_access,
+    google_secret_manager_secret_version.anthropic_key,
+    google_secret_manager_secret_iam_member.anthropic_key_access,
   ]
 }
 
@@ -175,6 +211,15 @@ resource "google_cloud_run_v2_job" "worker" {
             }
           }
         }
+        env {
+          name = "ANTHROPIC_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.anthropic_key.secret_id
+              version = "latest"
+            }
+          }
+        }
       }
     }
   }
@@ -182,6 +227,8 @@ resource "google_cloud_run_v2_job" "worker" {
     google_project_service.apis,
     google_secret_manager_secret_version.db_url,
     google_secret_manager_secret_iam_member.db_url_access,
+    google_secret_manager_secret_version.anthropic_key,
+    google_secret_manager_secret_iam_member.anthropic_key_access,
   ]
 }
 

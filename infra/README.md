@@ -10,7 +10,7 @@ One `terraform apply` stands up the whole GCP baseline:
 - the **orchestrator** as a Cloud Run Job (`bellweather orchestrate --once`),
 - a **Cloud Scheduler** trigger that runs the worker job every minute to drain the queue,
 - a **Cloud Scheduler** trigger that runs the orchestrator job every minute to fire due schedules,
-- a runtime **service account** + IAM, and a **Secret Manager** secret holding `DATABASE_URL`.
+- a runtime **service account** + IAM, and **Secret Manager** secrets holding `DATABASE_URL` and `ANTHROPIC_API_KEY`.
 
 ## The combined Cloud Run service (T17)
 
@@ -72,6 +72,36 @@ tick (D3) instead of waiting for the minute scheduler.
 
 **Cost:** one more tiny scheduled Job — it scales to zero between ticks, so it adds no
 always-on cost. Cloud SQL still dominates; the project stays in the `<$40/mo` envelope.
+
+## The LLM scrape engine secret (T42)
+
+The schema-driven scrape engine (`docs/specs/2026-06-01-llm-scrape-engine-design.md`) calls
+Anthropic's API — the **first paid runtime dependency** (D-b). The key is wired exactly like
+`DATABASE_URL`: a `bellweather-anthropic-api-key` Secret Manager secret (`+ version`, fed from
+`var.anthropic_api_key`), a `secretmanager.secretAccessor` grant to the runtime SA, and an
+`ANTHROPIC_API_KEY` env var sourced from that secret via `value_source.secret_key_ref`.
+
+It is mounted on **only two surfaces — the trusted spine** (K1/K9):
+
+| surface | why it needs the key |
+| ------- | -------------------- |
+| `bellweather-worker` Job | runs `LlmScrapeExtractor` (`scrape-llm-v1`) — the real extraction |
+| `bellweather-api` service | runs the in-process **dry-run preview** (`POST /api/scrape-specs/{name}/preview`) |
+
+The **orchestrator Job and the scrape collector it spawns do NOT get the key** (K4/D-e): the
+collector runs unprivileged, reads its spec via the API, and only fetches each site (httpx, no
+secret) and `POST /ingest`s the raw page — the LLM step happens later, worker-side. No new Cloud
+Run Job is added; the collector ships in the existing `producers/` image bake (T27), so no
+`Dockerfile` change is needed.
+
+`var.anthropic_api_key` is **optional** (defaults to `""`): the baseline applies without it, then
+the real key is dropped into the secret later (add a new secret version, or pass
+`-var anthropic_api_key=sk-ant-...`). Until set, `LlmExtractor` raises a clear `RuntimeError` and
+no scrape extraction succeeds — fetch/ingest/GDELT paths are unaffected.
+
+**Cost:** the secret itself is free; the per-call Anthropic spend is the D-b cost flag — held in
+budget by the cheap default model (Haiku) and low cadence. Cloud SQL still dominates the
+`<$40/mo` envelope.
 
 ## Prerequisites
 
