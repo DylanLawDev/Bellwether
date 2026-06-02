@@ -193,7 +193,9 @@ def test_preview_subprocess_real_dry_run_smoke():
 
 def test_preview_endpoint_returns_reshaped_contract():
     """End-to-end through the route: real subprocess + reshape, unwrapped body."""
-    r = client.post("/api/templates/echo_series/preview", json={"symbol_key": "smoke:x", "value": 0.5})
+    r = client.post(
+        "/api/templates/echo_series/preview", json={"symbol_key": "smoke:x", "value": 0.5}
+    )
     assert r.status_code == 200, r.text
     body = r.json()
     assert set(body) == {"submitted", "symbols", "sample"}
