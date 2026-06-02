@@ -28,3 +28,36 @@ def upsert_coverage(conn, source, tag_type, raw_value, observed_at):
                          sample_count = observations.sample_count + 1""",
         (sym_id, bucket),
     )
+
+
+def upsert_value(
+    conn,
+    symbol_key: str,
+    symbol_kind: str,
+    ts: datetime,
+    value: float,
+    *,
+    unit: str | None = None,
+    description: str | None = None,
+    sample_count: int = 1,
+) -> int:
+    sym_id = conn.execute(
+        """insert into tracked_symbols(key, kind, unit, description)
+           values (%s, %s, %s, %s)
+           on conflict (key) do update
+             set kind = excluded.kind,
+                 unit = coalesce(excluded.unit, tracked_symbols.unit),
+                 description = coalesce(excluded.description, tracked_symbols.description)
+           returning id""",
+        (symbol_key, symbol_kind, unit, description),
+    ).fetchone()[0]
+    bucket = bucket_ts(ts, get_settings().bellweather_obs_bucket)
+    conn.execute(
+        """insert into observations(tracked_symbol_id, ts_bucket, value, sample_count)
+           values (%s, %s, %s, %s)
+           on conflict (tracked_symbol_id, ts_bucket)
+           do update set value = excluded.value,
+                         sample_count = excluded.sample_count""",
+        (sym_id, bucket, value, sample_count),
+    )
+    return sym_id
