@@ -90,5 +90,39 @@ def run_template(
     typer.echo(json.dumps(summary))
 
 
+POLYMARKET_DEMO_NAME = "polymarket-demo"
+POLYMARKET_DEMO_TEMPLATE = "polymarket"
+# VERIFY the event URL is still a live Polymarket market before demoing (see producers/polymarket/README.md).
+POLYMARKET_DEMO_URL = "https://polymarket.com/event/us-x-iran-permanent-peace-deal-by"
+POLYMARKET_DEMO_PARAMS = {"url": POLYMARKET_DEMO_URL, "backfill": "all"}
+POLYMARKET_DEMO_INTERVAL = "30m"
+
+
+@app.command("seed-polymarket-demo")
+def seed_polymarket_demo() -> None:
+    """Idempotently seed the polymarket-demo producer schedule (Phase-2 go-live)."""
+    from bellweather import schedules
+    from bellweather.db import get_conn
+    from bellweather.templates import parse_interval
+
+    with get_conn() as conn:
+        existing = [s for s in schedules.list_schedules(conn) if s["name"] == POLYMARKET_DEMO_NAME]
+        if existing:
+            typer.echo(
+                f"skip: schedule {POLYMARKET_DEMO_NAME!r} already exists (id={existing[0]['id']})"
+            )
+            return
+        sid = schedules.create_schedule(
+            conn,
+            name=POLYMARKET_DEMO_NAME,
+            template=POLYMARKET_DEMO_TEMPLATE,
+            params=POLYMARKET_DEMO_PARAMS,
+            interval_seconds=parse_interval(POLYMARKET_DEMO_INTERVAL),
+            enabled=True,
+        )
+        conn.commit()
+        typer.echo(f"created: schedule {POLYMARKET_DEMO_NAME!r} (id={sid})")
+
+
 if __name__ == "__main__":  # `python -m bellweather.cli` parity with the console script
     app()
