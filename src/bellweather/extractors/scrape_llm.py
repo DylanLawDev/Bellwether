@@ -18,10 +18,14 @@ class LlmScrapeExtractor:
         self._llm = llm or LlmExtractor()
 
     def extract(self, envelope: dict) -> ExtractionResult:
-        spec = self._load(envelope["provenance"]["scrape_spec"])
+        # A missing provenance.scrape_spec is treated exactly like an unknown
+        # spec name: Submission defaults provenance to {} and scrape-llm-v1 is
+        # routable, so guard the lookup rather than KeyError into a poison retry.
+        spec_name = envelope.get("provenance", {}).get("scrape_spec")
+        spec = self._load(spec_name) if spec_name else None
         if spec is None:
-            # Unknown spec name: write nothing, but don't raise — the worker
-            # still acks/marks processed (same rule as an unknown extractor).
+            # Unknown/missing spec name: write nothing, but don't raise — the
+            # worker still acks/marks processed (same rule as an unknown extractor).
             return ExtractionResult()
         content = (
             envelope["payload"]

@@ -127,6 +127,26 @@ def test_extract_returns_empty_result_when_spec_missing():
     assert result.tags == []
 
 
+def test_extract_returns_empty_result_when_provenance_has_no_scrape_spec():
+    # A scrape-llm-v1 record whose provenance lacks scrape_spec entirely (provenance
+    # defaults to {}) must be treated like a missing spec — write nothing, no raise —
+    # rather than KeyError'ing into a poison-message retry in the worker.
+    loaded: list = []
+    ex = LlmScrapeExtractor(
+        spec_loader=lambda name: loaded.append(name) or None, llm=_FakeLlm(_INSTANCE)
+    )
+    envelope = {
+        "payload": "irrelevant",
+        "fetched_at": datetime(2026, 6, 1, tzinfo=timezone.utc).isoformat(),
+        "provenance": {},  # no scrape_spec key
+    }
+    result = ex.extract(envelope)
+    assert isinstance(result, ExtractionResult)
+    assert result.observations == []
+    assert result.tags == []
+    assert loaded == []  # loader is never called for a missing spec name
+
+
 def test_extract_json_encodes_non_string_payload():
     # If the bronze payload is a dict (not a raw string), the extractor json-dumps
     # it before handing it to the LLM (the contract's content is always str).
