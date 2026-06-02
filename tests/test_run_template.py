@@ -44,15 +44,14 @@ def test_dry_run_client_context_manager():
 
 def test_run_template_dry_run_emits_summary_with_sample(monkeypatch):
     monkeypatch.setenv("BELLWEATHER_TEMPLATES_DIR", str(FIXTURE_TEMPLATES))
-    monkeypatch.syspath_prepend(str(FIXTURE_TEMPLATES))
-    sys.modules.pop("echo.producer", None)  # avoid stale import across tests
+    sys.modules.pop("tests.fixtures.templates.echo_series.producer", None)  # avoid stale import
 
     result = CliRunner().invoke(
         app,
         [
             "run-template",
             "--template",
-            "echo",
+            "echo_series",
             "--dry-run",
             "--params",
             json.dumps({"symbol_key": "fixture:x", "value": 0.42}),

@@ -1,10 +1,11 @@
 name        = "echo"
-entrypoint  = "echo.producer:run"
-description = "Fixture template: emits a numeric-series-v1 submission from params."
+entrypoint  = "tests.fixtures.templates.echo.handler:run"
+description = "Echo template for tests"
 
 [params]
-symbol_key = { type = "str", required = true, help = "tracked symbol key" }
-value      = { type = "float", default = 0.5, help = "the single point's value" }
+url      = { type = "str", required = true, help = "Some URL" }
+mode     = { type = "str", default = "recent", choices = ["all", "recent"] }
+limit    = { type = "int", default = 10 }
 
 [schedule]
 default_interval = "30m"
