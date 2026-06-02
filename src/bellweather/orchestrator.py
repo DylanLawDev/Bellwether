@@ -35,16 +35,25 @@ def tick(conn) -> list[int]:
     """Run every due schedule once; return the started producer_runs ids."""
     started: list[int] = []
     for s in schedules.due_schedules(conn):
-        schedules.claim(conn, s["id"])
+        claimed = schedules.claim(conn, s["id"])
         conn.commit()
+        if not claimed:
+            continue  # Another concurrent tick already claimed this schedule
         run_id = schedules.start_run(
             conn, schedule_id=s["id"], template=s["template"], params=s["params"]
         )
         conn.commit()
         try:
             summary = _run_subprocess(s["template"], s["params"])
-            schedules.finish_run(conn, run_id, status="ok", submitted=summary.get("submitted"))
+            submitted = summary.get("submitted")
+            if submitted is not None:
+                try:
+                    submitted = int(submitted)
+                except (TypeError, ValueError):
+                    submitted = None
+            schedules.finish_run(conn, run_id, status="ok", submitted=submitted)
         except Exception as e:  # noqa: BLE001
+            conn.rollback()
             schedules.finish_run(conn, run_id, status="error", error=str(e))
         conn.commit()
         started.append(run_id)
