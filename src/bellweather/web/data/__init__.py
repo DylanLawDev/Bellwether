@@ -38,6 +38,12 @@ delete_schedule = _b.delete_schedule
 force_schedule = _b.force_schedule
 run_orchestrator_now = _b.run_orchestrator_now
 preview_template = _b.preview_template
+get_scrape_specs = _b.get_scrape_specs
+get_scrape_spec = _b.get_scrape_spec
+create_scrape_spec = _b.create_scrape_spec
+update_scrape_spec = _b.update_scrape_spec
+delete_scrape_spec = _b.delete_scrape_spec
+preview_scrape_spec = _b.preview_scrape_spec
 
 __all__ = [
     "BACKEND",
@@ -58,4 +64,10 @@ __all__ = [
     "force_schedule",
     "run_orchestrator_now",
     "preview_template",
+    "get_scrape_specs",
+    "get_scrape_spec",
+    "create_scrape_spec",
+    "update_scrape_spec",
+    "delete_scrape_spec",
+    "preview_scrape_spec",
 ]

@@ -185,3 +185,43 @@ def preview_template(name, params) -> dict:
     # reject "params" as an unknown template param). Returns {submitted, symbols,
     # sample}.
     return _request("POST", f"/api/templates/{name}/preview", json=params, timeout=_LONG_TIMEOUT)
+
+
+def get_scrape_specs() -> pd.DataFrame:
+    return _frame(_get("/api/scrape-specs"), contract.SCRAPE_SPEC_COLUMNS)
+
+
+def get_scrape_spec(name) -> dict:
+    return _get(f"/api/scrape-specs/{name}")
+
+
+def create_scrape_spec(
+    name, sites, output_schema, binding, *, description=None, fetch_adapter="httpx", llm_model=None
+) -> int:
+    body = {
+        "name": name,
+        "sites": sites,
+        "output_schema": output_schema,
+        "binding": binding,
+        "description": description,
+        "fetch_adapter": fetch_adapter,
+        "llm_model": llm_model,
+    }
+    return _request("POST", "/api/scrape-specs", json=body)["id"]
+
+
+def update_scrape_spec(name, **fields) -> None:
+    _request("PATCH", f"/api/scrape-specs/{name}", json=fields)
+
+
+def delete_scrape_spec(name) -> None:
+    _request("DELETE", f"/api/scrape-specs/{name}")
+
+
+def preview_scrape_spec(name, url=None) -> dict:
+    # Trusted in-process dry-run (K10): the API fetches one URL + LLM-extracts +
+    # binds, committing nothing. Holds the LLM key, so it can take orchestrator's
+    # long timeout. Returns {extracted, symbols, sample, tags}.
+    return _request(
+        "POST", f"/api/scrape-specs/{name}/preview", json={"url": url}, timeout=_LONG_TIMEOUT
+    )
