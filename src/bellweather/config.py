@@ -4,8 +4,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str
-    bellweather_bucket: str
+    database_url: str | None = None
+    bellweather_bucket: str | None = None
     storage_emulator_host: str | None = None
     bellweather_api_url: str = "http://localhost:8000"
     bellweather_obs_bucket: Literal["hour", "15min"] = "hour"

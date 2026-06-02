@@ -78,16 +78,33 @@ def get_template(name: str, templates_dir: str | None = None) -> Template | None
     return discover_templates(templates_dir).get(name)
 
 
+def _coerce_bool(v):
+    if isinstance(v, bool):
+        return v
+    s = str(v).lower()
+    if s in ("1", "true", "yes"):
+        return True
+    if s in ("0", "false", "no"):
+        return False
+    raise ValueError(f"invalid bool value: {v!r}")
+
+
 _COERCERS = {
     "str": str,
     "int": int,
     "float": float,
-    "bool": lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes"),
+    "bool": _coerce_bool,
 }
 
 
 def validate_params(template: Template, params: dict) -> dict:
     """Apply defaults, enforce required + choices, coerce types. ValueError on bad."""
+    if not isinstance(params, dict):
+        raise ValueError(f"params must be a dict, got {type(params).__name__}")
+    declared = {p.name for p in template.params}
+    unknown = set(params) - declared
+    if unknown:
+        raise ValueError(f"unknown param(s): {', '.join(sorted(unknown))}")
     out: dict = {}
     for p in template.params:
         if p.name in params and params[p.name] is not None:
