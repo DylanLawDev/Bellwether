@@ -28,3 +28,32 @@ class BellwetherClient:
 
     def __exit__(self, *args) -> None:
         self.close()
+
+
+class DryRunClient:
+    """Same surface as ``BellwetherClient`` but performs no I/O.
+
+    Captures every submission in ``.captured`` and returns ``created`` results.
+    Used by the dry-run preview (K9) and by the run-harness under ``--dry-run``;
+    commits nothing, makes no HTTP.
+    """
+
+    def __init__(self) -> None:
+        self.captured: list[Submission] = []
+
+    def ingest(self, sub: Submission) -> IngestResult:
+        self.captured.append(sub)
+        return IngestResult(status="created")
+
+    def ingest_batch(self, subs: list[Submission]) -> list[IngestResult]:
+        self.captured.extend(subs)
+        return [IngestResult(status="created") for _ in subs]
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
