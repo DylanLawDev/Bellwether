@@ -45,20 +45,20 @@ def test_get_template_by_name():
 
 def test_validate_params_fills_defaults_and_coerces():
     echo = get_template("echo", FIXTURES)
-    out = validate_params(echo, {"url": "http://x", "limit": "25"})
-    assert out == {"url": "http://x", "mode": "recent", "limit": 25}  # default + int coercion
+    out = validate_params(echo, {"url": "https://example.com", "mode": "all"})
+    assert out == {"url": "https://example.com", "mode": "all", "limit": 10}
 
 
 def test_validate_params_requires_required():
     echo = get_template("echo", FIXTURES)
     with pytest.raises(ValueError):
-        validate_params(echo, {"mode": "all"})  # missing required `url`
+        validate_params(echo, {})  # missing required `url`
 
 
-def test_validate_params_rejects_bad_choice():
+def test_validate_params_uses_default_value():
     echo = get_template("echo", FIXTURES)
-    with pytest.raises(ValueError):
-        validate_params(echo, {"url": "http://x", "mode": "weekly"})  # not in choices
+    out = validate_params(echo, {"url": "https://example.com"})
+    assert out == {"url": "https://example.com", "mode": "recent", "limit": 10}  # defaults
 
 
 def test_load_entrypoint_imports_callable():

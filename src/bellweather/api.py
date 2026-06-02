@@ -1,13 +1,16 @@
+import json
+import subprocess
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, FastAPI, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 
-from bellweather import reads
+from bellweather import reads, schedules, templates
 from bellweather.contracts import IngestResult, Submission
 from bellweather.db import get_conn
 from bellweather.ingest import ingest_record
+from bellweather.orchestrator import _child_env, tick
 
 app = FastAPI(title="Bellweather Ingestion")
 
@@ -108,6 +111,123 @@ class ConfigRow(BaseModel):
     note: str
 
 
+# --- control-plane API (schedules / templates / runs) -----------------------
+class ScheduleRow(BaseModel):
+    id: int
+    name: str
+    template: str
+    params: dict
+    interval_seconds: int
+    enabled: bool
+    force_run: bool
+    last_run_at: datetime | None
+
+
+class ScheduleCreate(BaseModel):
+    name: str
+    template: str
+    params: dict = {}
+    interval_seconds: int
+    enabled: bool = True
+
+
+class SchedulePatch(BaseModel):
+    name: str | None = None
+    params: dict | None = None
+    interval_seconds: int | None = None
+    enabled: bool | None = None
+    force_run: bool | None = None
+
+
+class TemplateParamRow(BaseModel):
+    name: str
+    type: str
+    required: bool
+    default: object | None = None
+    choices: list | None = None
+    help: str | None = None
+
+
+class TemplateRow(BaseModel):
+    name: str
+    entrypoint: str
+    description: str
+    params: list[TemplateParamRow]
+    default_interval_seconds: int | None = None
+
+
+class RunRow(BaseModel):
+    id: int
+    schedule_id: int | None
+    template: str
+    params: dict
+    started_at: datetime
+    finished_at: datetime | None
+    status: str
+    submitted: int | None
+    error: str | None
+
+
+class TickResult(BaseModel):
+    started_run_ids: list[int]
+
+
+def _preview_shape(summary: dict) -> dict:
+    """Flatten a dry-run summary into the control-plane preview contract.
+
+    ``run-template --dry-run`` emits ``{"submitted": int, "sample": [<Submission
+    dict>, ...]}``. The UI wants ``{"submitted", "symbols", "sample"}`` where
+    ``symbols`` is the distinct symbol keys and ``sample`` is one flat row per
+    point: ``{"symbol_key", "ts", "value"}``. Submissions without a numeric
+    ``symbol_key``/``points`` payload (e.g. unstructured) count toward
+    ``submitted`` but contribute no symbols/sample rows.
+    """
+    symbols: list[str] = []
+    sample: list[dict] = []
+    for sub in summary.get("sample", []):
+        payload = sub.get("payload") or {}
+        key = payload.get("symbol_key")
+        if key is None:
+            continue
+        if key not in symbols:
+            symbols.append(key)
+        for pt in payload.get("points", []):
+            sample.append({"symbol_key": key, "ts": pt.get("ts"), "value": pt.get("value")})
+    return {"submitted": summary.get("submitted", 0), "symbols": symbols, "sample": sample}
+
+
+def _preview_subprocess(template: str, params: dict) -> dict:
+    """Spawn `bellweather run-template --dry-run` with a minimal env (K4/K9).
+
+    Uses the installed ``bellweather`` console script (NOT ``python -m
+    bellweather.cli`` — that imports the module without a ``__main__`` guard
+    and emits nothing) and the shared ``orchestrator._child_env()`` so the
+    child can discover/import the template while never receiving the API's
+    DB/bucket credentials. Reshapes the summary into the preview contract.
+    """
+    proc = subprocess.run(
+        [
+            "bellweather",
+            "run-template",
+            "--template",
+            template,
+            "--params",
+            json.dumps(params),
+            "--dry-run",
+        ],
+        env=_child_env(),
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(status_code=502, detail=proc.stderr.strip() or "preview failed")
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if not lines:
+        raise HTTPException(status_code=502, detail="preview produced no output")
+    return _preview_shape(json.loads(lines[-1]))
+
+
 api_router = APIRouter(prefix="/api")
 
 
@@ -188,6 +308,104 @@ def api_ingestion_rate(hours: int = 48):
 @api_router.get("/config", response_model=list[ConfigRow])
 def api_config():
     return reads.get_config()
+
+
+@api_router.get("/templates", response_model=list[TemplateRow])
+def api_templates():
+    out = []
+    for t in templates.discover_templates().values():
+        out.append(
+            TemplateRow(
+                name=t.name,
+                entrypoint=t.entrypoint,
+                description=t.description,
+                default_interval_seconds=t.default_interval_seconds,
+                params=[
+                    TemplateParamRow(
+                        name=p.name,
+                        type=p.type,
+                        required=p.required,
+                        default=p.default,
+                        choices=p.choices,
+                        help=p.help,
+                    )
+                    for p in t.params
+                ],
+            )
+        )
+    return out
+
+
+@api_router.post("/templates/{name}/preview")
+def api_template_preview(name: str, params: dict):
+    if name not in templates.discover_templates():
+        raise HTTPException(status_code=404, detail="unknown template")
+    return _preview_subprocess(name, params)
+
+
+@api_router.get("/schedules", response_model=list[ScheduleRow])
+def api_schedules():
+    with get_conn() as conn:
+        return schedules.list_schedules(conn)
+
+
+@api_router.post("/schedules", response_model=ScheduleRow)
+def api_create_schedule(body: ScheduleCreate):
+    with get_conn() as conn:
+        sid = schedules.create_schedule(
+            conn,
+            name=body.name,
+            template=body.template,
+            params=body.params,
+            interval_seconds=body.interval_seconds,
+            enabled=body.enabled,
+        )
+        conn.commit()
+        return schedules.get_schedule(conn, sid)
+
+
+@api_router.patch("/schedules/{schedule_id}", response_model=ScheduleRow)
+def api_update_schedule(schedule_id: int, body: SchedulePatch):
+    fields = body.model_dump(exclude_none=True)
+    with get_conn() as conn:
+        if schedules.get_schedule(conn, schedule_id) is None:
+            raise HTTPException(status_code=404, detail="unknown schedule")
+        if fields:
+            schedules.update_schedule(conn, schedule_id, **fields)
+            conn.commit()
+        return schedules.get_schedule(conn, schedule_id)
+
+
+@api_router.delete("/schedules/{schedule_id}")
+def api_delete_schedule(schedule_id: int):
+    with get_conn() as conn:
+        if schedules.get_schedule(conn, schedule_id) is None:
+            raise HTTPException(status_code=404, detail="unknown schedule")
+        schedules.delete_schedule(conn, schedule_id)
+        conn.commit()
+    return {"status": "deleted"}
+
+
+@api_router.post("/schedules/{schedule_id}/force", response_model=ScheduleRow)
+def api_force_schedule(schedule_id: int):
+    with get_conn() as conn:
+        if schedules.get_schedule(conn, schedule_id) is None:
+            raise HTTPException(status_code=404, detail="unknown schedule")
+        schedules.set_force_run(conn, schedule_id, True)
+        conn.commit()
+        return schedules.get_schedule(conn, schedule_id)
+
+
+@api_router.post("/orchestrator/run", response_model=TickResult)
+def api_orchestrator_run():
+    with get_conn() as conn:
+        return TickResult(started_run_ids=tick(conn))
+
+
+@api_router.get("/runs", response_model=list[RunRow])
+def api_runs(schedule_id: int | None = None, limit: int = Query(50, ge=1, le=500)):
+    with get_conn() as conn:
+        return schedules.list_runs(conn, schedule_id=schedule_id, limit=limit)
 
 
 app.include_router(api_router)

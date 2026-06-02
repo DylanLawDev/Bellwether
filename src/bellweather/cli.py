@@ -88,3 +88,7 @@ def run_template(
         summary["sample"] = [s.model_dump(mode="json") for s in client.captured[:SAMPLE_LIMIT]]
         summary["submitted"] = len(client.captured)
     typer.echo(json.dumps(summary))
+
+
+if __name__ == "__main__":  # `python -m bellweather.cli` parity with the console script
+    app()
