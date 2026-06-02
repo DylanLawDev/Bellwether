@@ -6,25 +6,16 @@ bellweather.web.data (mock or live). Schedule a spec from the Schedules page wit
 template "scrape" and params {"spec": <name>}.
 """
 
-import json
-
 import streamlit as st
 
 from bellweather.web import data
+from bellweather.web.pages import _scrape_form as form
 
 st.title("Scrape specs")
 st.caption(
     "Declare {sites, output schema, binding} once; preview the LLM extraction, "
     "then schedule with the 'scrape' template."
 )
-
-
-def _parse_json(label: str, raw: str) -> tuple[object | None, str | None]:
-    """Parse a JSON text area; return (value, error_message)."""
-    try:
-        return json.loads(raw), None
-    except json.JSONDecodeError as exc:
-        return None, f"{label} is not valid JSON: {exc}"
 
 
 # --- existing specs ---------------------------------------------------------
@@ -68,7 +59,13 @@ with st.form("add_spec"):
     sites_raw = st.text_area("Sites (one URL per line)", value="https://example.com/")
     output_schema_raw = st.text_area(
         "Output schema (JSON Schema)",
-        value='{\n  "type": "object",\n  "properties": {"price": {"type": "number"}}\n}',
+        # Defaults must stay self-consistent: the binding below formats
+        # symbol_key with {title}, so the schema has to ask the LLM for `title`
+        # too — otherwise apply_binding skips every record (zero observations).
+        value=(
+            '{\n  "type": "object",\n  "properties": {\n'
+            '    "title": {"type": "string"},\n    "price": {"type": "number"}\n  }\n}'
+        ),
     )
     binding_raw = st.text_area(
         "Binding (JSON)",
@@ -83,13 +80,19 @@ with st.form("add_spec"):
 
 if added:
     sites = [line.strip() for line in sites_raw.splitlines() if line.strip()]
-    output_schema, err_schema = _parse_json("Output schema", output_schema_raw)
-    binding, err_binding = _parse_json("Binding", binding_raw)
+    output_schema, err_schema = form.parse_json("Output schema", output_schema_raw)
+    binding, err_binding = form.parse_json("Binding", binding_raw)
     errors = [e for e in (err_schema, err_binding) if e]
-    if not name.strip():
-        errors.append("Spec name is required.")
+    # JSON that parses but isn't an object would 422 against the API's dict
+    # models — reject it here as a form error instead.
+    if err_schema is None:
+        errors.append(form.validate_json_object("Output schema", output_schema))
+    if err_binding is None:
+        errors.append(form.validate_json_object("Binding", binding))
+    errors.append(form.validate_spec_name(name))
     if not sites:
         errors.append("At least one site URL is required.")
+    errors = [e for e in errors if e]
     if errors:
         for e in errors:
             st.error(e)
