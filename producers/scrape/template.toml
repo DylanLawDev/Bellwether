@@ -1,0 +1,9 @@
+name        = "scrape"
+entrypoint  = "producers.scrape.collector:run"
+description = "Generic schema-driven scrape collector: fetch each site in a scrape spec and POST the raw page to /ingest (LLM extraction happens worker-side)."
+
+[params]
+spec = { type = "str", required = true, help = "scrape_specs.name" }
+
+[schedule]
+default_interval = "6h"
