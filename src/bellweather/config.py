@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     bellweather_api_url: str = "http://localhost:8000"
     bellweather_obs_bucket: Literal["hour", "15min"] = "hour"
     bellweather_templates_dir: str = "producers"  # dir scanned for */template.toml
+    anthropic_api_key: str | None = None
+    scrape_llm_model: str = "claude-haiku-4-5-20251001"  # cheap default; per-spec override wins
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

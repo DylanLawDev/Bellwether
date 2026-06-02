@@ -67,3 +67,7 @@ def _gcs_reachable() -> bool:
 
 
 requires_gcs = pytest.mark.skipif(not _gcs_reachable(), reason="GCS emulator not reachable")
+
+requires_llm = pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
+)
