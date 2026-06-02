@@ -80,6 +80,21 @@ def test_run_emits_one_numeric_series_submission_per_variant(monkeypatch):
     assert len(yes.idempotency_key.rsplit(":", 1)[1]) == 40  # sha1 hex digest
 
 
+def test_run_skips_variants_with_empty_history(monkeypatch):
+    # NO returns no price points (resolved/sparse market). It must not produce a
+    # Submission: an empty numeric-series carries no observations, and a non-empty
+    # snapshot would get a _now()-based fetched_at, writing a fresh orphan bronze
+    # object under a new YYYY/MM/DD prefix on every re-fetch.
+    history = {"111": _points(0.30, 0.37), "222": []}
+    _patch(monkeypatch, variants=[YES, NO], history=history)
+
+    client = DryRunClient()
+    summary = pmkt.run({"url": "u", "backfill": "all"}, client)
+
+    assert summary == {"submitted": 1, "symbols": 1}
+    assert [s.payload["symbol_key"] for s in client.captured] == ["polymarket:us-x-by-d:111"]
+
+
 def test_backfill_recent_uses_daily_interval(monkeypatch):
     history = {"111": _points(0.30)}
     seen = {}

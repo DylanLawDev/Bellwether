@@ -108,6 +108,12 @@ def run(params: dict, client) -> dict:
     subs: list[Submission] = []
     for variant in fetch_variants(slug):
         points = fetch_price_history(variant.token_id, interval=interval)
+        if not points:
+            # Nothing to record. An empty numeric-series yields no observations, and
+            # build_submission would stamp a _now()-based fetched_at, so each re-fetch
+            # of a resolved/sparse market would write a fresh orphan bronze object under
+            # a new YYYY/MM/DD prefix instead of being the documented no-op.
+            continue
         subs.append(build_submission(slug, variant, points))
 
     results = client.ingest_batch(subs)
