@@ -8,6 +8,25 @@ from bellweather.config import get_settings
 from bellweather.db import get_conn
 
 
+def _child_env() -> dict[str, str]:
+    """Minimal environment for a spawned template subprocess (K4).
+
+    Carries the ingest URL, the templates dir (so the child can *discover* the
+    template), PATH, and PYTHONPATH (so the entrypoint module is importable —
+    fixture entrypoints are dotted ``tests.fixtures...`` paths and real
+    producers live under the templates dir, both relative to cwd). It
+    deliberately omits ``DATABASE_URL`` / ``BELLWEATHER_BUCKET``: a spawned
+    customer script never receives the spine's DB/bucket credentials.
+    """
+    s = get_settings()
+    return {
+        "BELLWEATHER_API_URL": s.bellweather_api_url,
+        "BELLWEATHER_TEMPLATES_DIR": s.bellweather_templates_dir,
+        "PYTHONPATH": os.environ.get("PYTHONPATH") or os.getcwd(),
+        "PATH": os.environ["PATH"],
+    }
+
+
 def _run_subprocess(template: str, params: dict, *, timeout: int = 600) -> dict:
     proc = subprocess.run(
         [
@@ -18,10 +37,7 @@ def _run_subprocess(template: str, params: dict, *, timeout: int = 600) -> dict:
             "--params",
             json.dumps(params),
         ],
-        env={
-            "BELLWEATHER_API_URL": get_settings().bellweather_api_url,
-            "PATH": os.environ["PATH"],
-        },  # K4: ingest URL only — never DATABASE_URL / BELLWEATHER_BUCKET
+        env=_child_env(),
         capture_output=True,
         text=True,
         timeout=timeout,
