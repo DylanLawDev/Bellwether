@@ -185,6 +185,59 @@ resource "google_cloud_run_v2_job" "worker" {
   ]
 }
 
+# --- Orchestrator (Cloud Run Job: `bellweather orchestrate --once`) ---
+# Mirrors the worker Job: same runtime SA, same DATABASE_URL secret. It reads the
+# schedule registry and spawns each due template as a subprocess. The SCRIPTS it
+# spawns get only BELLWEATHER_API_URL (no DB/bucket creds, K4); the orchestrator
+# itself needs the DB to read producer_schedules / write producer_runs.
+resource "google_cloud_run_v2_job" "orchestrator" {
+  name                = "bellweather-orchestrator"
+  location            = var.region
+  deletion_protection = false
+  template {
+    template {
+      service_account = google_service_account.runtime.email
+      containers {
+        image   = var.image
+        command = ["bellweather", "orchestrate", "--once"]
+        dynamic "env" {
+          for_each = local.common_env
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+        # D2: the orchestrator targets THIS project's own in-project API service —
+        # never a public/third-party endpoint. It authenticates as the runtime SA.
+        env {
+          name  = "BELLWEATHER_API_URL"
+          value = google_cloud_run_v2_service.api.uri
+        }
+        # The baked-in templates dir (see Dockerfile). Explicit here so the Job's
+        # env matches the image default even if the bake location ever changes.
+        env {
+          name  = "BELLWEATHER_TEMPLATES_DIR"
+          value = "/app/producers"
+        }
+        env {
+          name = "DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.db_url.secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [
+    google_project_service.apis,
+    google_secret_manager_secret_version.db_url,
+    google_secret_manager_secret_iam_member.db_url_access,
+  ]
+}
+
 # --- Scheduler: run the worker job every minute ---
 resource "google_service_account" "scheduler" {
   account_id   = "bellweather-scheduler"
@@ -205,6 +258,37 @@ resource "google_cloud_scheduler_job" "drain" {
   http_target {
     http_method = "POST"
     uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.worker.name}:run"
+    oauth_token {
+      service_account_email = google_service_account.scheduler.email
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+# --- Scheduler: run the orchestrator job every minute (mirrors the worker drain) ---
+resource "google_cloud_run_v2_job_iam_member" "scheduler_orchestrate" {
+  name     = google_cloud_run_v2_job.orchestrator.name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.scheduler.email}"
+}
+
+# D3: the API service (which runs as the runtime SA) can invoke the orchestrator Job,
+# so the UI's "Run now" button (POST /api/orchestrator/run) triggers an immediate tick.
+resource "google_cloud_run_v2_job_iam_member" "runtime_orchestrate" {
+  name     = google_cloud_run_v2_job.orchestrator.name
+  location = var.region
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_cloud_scheduler_job" "orchestrate" {
+  name     = "bellweather-orchestrate"
+  schedule = "* * * * *"
+  region   = var.region
+  http_target {
+    http_method = "POST"
+    uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.orchestrator.name}:run"
     oauth_token {
       service_account_email = google_service_account.scheduler.email
     }
