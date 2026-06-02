@@ -1,12 +1,17 @@
 import json
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 
 from bellweather import reads, schedules, templates
+import bellweather.fetch.httpx_fetch  # noqa: F401  # registers the default "httpx" adapter
+from bellweather.fetch import get_fetcher
+from bellweather.llm import LlmExtractor
+from bellweather.scrape import specs as scrape_specs
+from bellweather.scrape.binding import apply_binding
 from bellweather.contracts import IngestResult, Submission
 from bellweather.db import get_conn
 from bellweather.ingest import ingest_record
@@ -172,6 +177,63 @@ class TickResult(BaseModel):
     started_run_ids: list[int]
 
 
+# --- scrape-spec control plane (read / CRUD / preview) ----------------------
+class ScrapeSpecRow(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    sites: list
+    output_schema: dict
+    binding: dict
+    fetch_adapter: str
+    llm_model: str | None = None
+    enabled: bool
+
+
+class ScrapeSpecCreate(BaseModel):
+    name: str
+    sites: list = []
+    output_schema: dict
+    binding: dict
+    description: str | None = None
+    fetch_adapter: str = "httpx"
+    llm_model: str | None = None
+    enabled: bool = True
+
+
+class ScrapeSpecPatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    sites: list | None = None
+    output_schema: dict | None = None
+    binding: dict | None = None
+    fetch_adapter: str | None = None
+    llm_model: str | None = None
+    enabled: bool | None = None
+
+
+class ScrapePreviewRequest(BaseModel):
+    url: str | None = None
+
+
+class ScrapePreviewSampleRow(BaseModel):
+    symbol_key: str
+    ts: datetime
+    value: float
+
+
+class ScrapePreviewTagRow(BaseModel):
+    tag_type: str
+    raw_value: str
+
+
+class ScrapePreviewResult(BaseModel):
+    extracted: dict
+    symbols: list[str]
+    sample: list[ScrapePreviewSampleRow]
+    tags: list[ScrapePreviewTagRow]
+
+
 def _preview_shape(summary: dict) -> dict:
     """Flatten a dry-run summary into the control-plane preview contract.
 
@@ -226,6 +288,44 @@ def _preview_subprocess(template: str, params: dict) -> dict:
     if not lines:
         raise HTTPException(status_code=502, detail="preview produced no output")
     return _preview_shape(json.loads(lines[-1]))
+
+
+SCRAPE_PREVIEW_SAMPLE_LIMIT = 50  # cap flat sample/symbol rows a dry-run preview returns
+
+
+def _scrape_preview(spec: dict, url: str | None) -> dict:
+    """In-process K10 dry-run: fetch ONE url, LLM-extract against the spec's
+    output_schema, apply the spec's binding, and return the extracted JSON +
+    would-be observations/tags. Commits NOTHING — no bronze, no /ingest, no DB.
+
+    The API is the trusted surface that holds the LLM key (the collector does
+    not), so this runs in-process rather than spawning a subprocess. Reuses the
+    same units the worker path uses: get_fetcher, LlmExtractor, apply_binding.
+    """
+    target = url or (spec["sites"][0] if spec["sites"] else None)
+    if not target:
+        raise HTTPException(status_code=400, detail="spec has no sites and no url given")
+    fetcher = get_fetcher(spec["fetch_adapter"])
+    if fetcher is None:
+        raise HTTPException(
+            status_code=400, detail=f"unknown fetch adapter: {spec['fetch_adapter']}"
+        )
+    fetched = fetcher.fetch(target)
+    instance = LlmExtractor().extract(
+        fetched.content, spec["output_schema"], model=spec.get("llm_model")
+    )
+    obs, tags = apply_binding(instance, spec["binding"], fetched_at=datetime.now(timezone.utc))
+    symbols: list[str] = []
+    for o in obs:
+        if o.symbol_key not in symbols:
+            symbols.append(o.symbol_key)
+    sample = [{"symbol_key": o.symbol_key, "ts": o.ts, "value": o.value} for o in obs]
+    return {
+        "extracted": instance,
+        "symbols": symbols[:SCRAPE_PREVIEW_SAMPLE_LIMIT],
+        "sample": sample[:SCRAPE_PREVIEW_SAMPLE_LIMIT],
+        "tags": [{"tag_type": t.tag_type, "raw_value": t.raw_value} for t in tags],
+    }
 
 
 api_router = APIRouter(prefix="/api")
@@ -406,6 +506,75 @@ def api_orchestrator_run():
 def api_runs(schedule_id: int | None = None, limit: int = Query(50, ge=1, le=500)):
     with get_conn() as conn:
         return schedules.list_runs(conn, schedule_id=schedule_id, limit=limit)
+
+
+@api_router.get("/scrape-specs", response_model=list[ScrapeSpecRow])
+def api_scrape_specs():
+    with get_conn() as conn:
+        return scrape_specs.list_specs(conn)
+
+
+@api_router.get("/scrape-specs/{name}", response_model=ScrapeSpecRow)
+def api_scrape_spec(name: str):
+    with get_conn() as conn:
+        spec = scrape_specs.get_spec(conn, name)
+        if spec is None:
+            raise HTTPException(status_code=404, detail="unknown scrape spec")
+        return spec
+
+
+@api_router.post("/scrape-specs", response_model=ScrapeSpecRow)
+def api_create_scrape_spec(body: ScrapeSpecCreate):
+    with get_conn() as conn:
+        scrape_specs.create_spec(
+            conn,
+            name=body.name,
+            sites=body.sites,
+            output_schema=body.output_schema,
+            binding=body.binding,
+            description=body.description,
+            fetch_adapter=body.fetch_adapter,
+            llm_model=body.llm_model,
+            enabled=body.enabled,
+        )
+        conn.commit()
+        return scrape_specs.get_spec(conn, body.name)
+
+
+@api_router.patch("/scrape-specs/{name}", response_model=ScrapeSpecRow)
+def api_update_scrape_spec(name: str, body: ScrapeSpecPatch):
+    # exclude_unset (not exclude_none): a PATCH that explicitly sends a nullable
+    # field as null (e.g. {"llm_model": null} to fall back to the settings default,
+    # or {"description": null} to clear it) must reach update_spec, while omitted
+    # fields stay untouched. exclude_none would silently drop those explicit nulls.
+    fields = body.model_dump(exclude_unset=True)
+    with get_conn() as conn:
+        if scrape_specs.get_spec(conn, name) is None:
+            raise HTTPException(status_code=404, detail="unknown scrape spec")
+        if fields:
+            scrape_specs.update_spec(conn, name, **fields)
+            conn.commit()
+        # A patch may rename the spec; look it up by its (possibly new) name.
+        return scrape_specs.get_spec(conn, fields.get("name", name))
+
+
+@api_router.delete("/scrape-specs/{name}")
+def api_delete_scrape_spec(name: str):
+    with get_conn() as conn:
+        if scrape_specs.get_spec(conn, name) is None:
+            raise HTTPException(status_code=404, detail="unknown scrape spec")
+        scrape_specs.delete_spec(conn, name)
+        conn.commit()
+    return {"status": "deleted"}
+
+
+@api_router.post("/scrape-specs/{name}/preview", response_model=ScrapePreviewResult)
+def api_scrape_spec_preview(name: str, body: ScrapePreviewRequest):
+    with get_conn() as conn:
+        spec = scrape_specs.get_spec(conn, name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="unknown scrape spec")
+    return _scrape_preview(spec, body.url)
 
 
 app.include_router(api_router)

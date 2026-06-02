@@ -175,6 +175,7 @@ def _seeded_spec():
     with get_conn() as c:
         clear_records(c, _SOURCE, (_KEY,))
         clear_observations(c, (_SYMBOL_KEY,))
+        c.execute("delete from tracked_symbols where key = %s", (_SYMBOL_KEY,))
         delete_spec(c, _SPEC_NAME)  # idempotent: no-op if absent
         create_spec(
             c,
@@ -189,6 +190,10 @@ def _seeded_spec():
     with get_conn() as c:
         clear_records(c, _SOURCE, (_KEY,))
         clear_observations(c, (_SYMBOL_KEY,))
+        # clear_observations leaves tracked_symbols rows intact (it only deletes
+        # the FK children); delete the symbol explicitly so a scrape:prices:%
+        # row does not bleed into test_api_scrape assertions.
+        c.execute("delete from tracked_symbols where key = %s", (_SYMBOL_KEY,))
         delete_spec(c, _SPEC_NAME)
         c.commit()
 
