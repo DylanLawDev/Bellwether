@@ -1,10 +1,11 @@
 name        = "echo"
-entrypoint  = "tests.fixtures.templates.echo.producer:run"
-description = "Fixture echo template for control-plane API tests"
+entrypoint  = "tests.fixtures.templates.echo.handler:run"
+description = "Echo template for tests"
 
 [params]
-url      = { type = "str", required = true, help = "A URL to echo" }
-backfill = { type = "str", default = "all", choices = ["all", "recent"] }
+url      = { type = "str", required = true, help = "Some URL" }
+mode     = { type = "str", default = "recent", choices = ["all", "recent"] }
+limit    = { type = "int", default = 10 }
 
 [schedule]
 default_interval = "30m"

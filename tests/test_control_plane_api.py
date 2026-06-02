@@ -50,7 +50,7 @@ def _create(name="t25-sched-a", interval_seconds=1800, enabled=True):
     body = {
         "name": name,
         "template": "echo",
-        "params": {"url": "https://example.com", "backfill": "all"},
+        "params": {"url": "https://example.com"},
         "interval_seconds": interval_seconds,
         "enabled": enabled,
     }
@@ -118,21 +118,25 @@ def test_patch_missing_schedule_is_404():
 def test_templates_lists_fixture_template():
     rows = client.get("/api/templates").json()
     echo = next(t for t in rows if t["name"] == "echo")
-    assert echo["entrypoint"] == "tests.fixtures.templates.echo.producer:run"
+    assert echo["entrypoint"] == "tests.fixtures.templates.echo.handler:run"
     assert echo["default_interval_seconds"] == 1800
     names = {p["name"] for p in echo["params"]}
-    assert {"url", "backfill"} <= names
+    assert {"url", "mode", "limit"} <= names
     url = next(p for p in echo["params"] if p["name"] == "url")
     assert url["required"] is True
 
 
-def test_preview_spawns_minimal_env_subprocess(monkeypatch):
+def test_preview_route_passes_body_as_params_and_returns_shape(monkeypatch):
     captured = {}
 
     def fake_preview(template, params):
         captured["template"] = template
         captured["params"] = params
-        return {"submitted": 2, "sample": [{"symbol_key": "demo:x", "value": 0.5}]}
+        return {
+            "submitted": 2,
+            "symbols": ["demo:x"],
+            "sample": [{"symbol_key": "demo:x", "ts": "2026-06-01T00:00:00+00:00", "value": 0.5}],
+        }
 
     monkeypatch.setattr(api, "_preview_subprocess", fake_preview)
     r = client.post("/api/templates/echo/preview", json={"url": "https://example.com"})
@@ -141,6 +145,7 @@ def test_preview_spawns_minimal_env_subprocess(monkeypatch):
     assert captured["template"] == "echo"
     assert captured["params"] == {"url": "https://example.com"}
     assert body["submitted"] == 2
+    assert body["symbols"] == ["demo:x"]
     assert body["sample"][0]["symbol_key"] == "demo:x"
 
 
@@ -176,24 +181,25 @@ def test_preview_shape_flattens_submission_points_to_symbols_and_sample():
 
 
 def test_preview_subprocess_real_dry_run_smoke():
-    """Non-mocked: spawn the real `bellweather run-template --dry-run` against the
-    echo fixture and assert the reshaped preview contract. This is the test that
-    catches the `python -m bellweather.cli` (no __main__) and env-stripping bugs."""
-    out = api._preview_subprocess("echo", {"url": "https://example.com"})
+    """Non-mocked: spawn `bellweather run-template --dry-run` against the T23
+    echo_series fixture. Exercises the whole real path: console script, _child_env
+    (templates dir + PYTHONPATH + placeholder creds), entrypoint import, capture,
+    and {submitted, symbols, sample} reshape."""
+    out = api._preview_subprocess("echo_series", {"symbol_key": "smoke:x", "value": 0.5})
     assert out["submitted"] == 1
-    assert out["symbols"] == ["echo:url"]
-    assert out["sample"] == [{"symbol_key": "echo:url", "ts": "2026-06-01T12:00:00Z", "value": 0.5}]
+    assert out["symbols"] == ["smoke:x"]
+    assert out["sample"][0] == {"symbol_key": "smoke:x", "ts": "2026-06-01T12:00:00Z", "value": 0.5}
 
 
 def test_preview_endpoint_returns_reshaped_contract():
     """End-to-end through the route: real subprocess + reshape, unwrapped body."""
-    r = client.post("/api/templates/echo/preview", json={"url": "https://example.com"})
+    r = client.post("/api/templates/echo_series/preview", json={"symbol_key": "smoke:x", "value": 0.5})
     assert r.status_code == 200, r.text
     body = r.json()
     assert set(body) == {"submitted", "symbols", "sample"}
-    assert body["symbols"] == ["echo:url"]
+    assert body["symbols"] == ["smoke:x"]
     assert body["sample"][0] == {
-        "symbol_key": "echo:url",
+        "symbol_key": "smoke:x",
         "ts": "2026-06-01T12:00:00Z",
         "value": 0.5,
     }

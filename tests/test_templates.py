@@ -21,20 +21,21 @@ def test_discover_finds_echo_with_params():
     assert "echo" in found  # sibling fixture templates (e.g. echo_series) may coexist
     echo = found["echo"]
     assert isinstance(echo, Template)
-    assert echo.entrypoint == "tests.fixtures.templates.echo.producer:run"
-    assert echo.description == "Fixture echo template for control-plane API tests"
+    assert echo.entrypoint == "tests.fixtures.templates.echo.handler:run"
+    assert echo.description == "Echo template for tests"
     assert echo.default_interval_seconds == 1800
     by_name = {p.name: p for p in echo.params}
     assert isinstance(by_name["url"], TemplateParam)
     assert by_name["url"].required is True and by_name["url"].type == "str"
-    assert by_name["backfill"].type == "str" and by_name["backfill"].default == "all"
+    assert by_name["mode"].default == "recent" and by_name["mode"].choices == ["all", "recent"]
+    assert by_name["limit"].type == "int" and by_name["limit"].default == 10
 
 
 def test_discovery_does_not_import_entrypoint():
-    # The producer module must NOT be imported by discovery (no code execution to list).
-    sys.modules.pop("tests.fixtures.templates.echo.producer", None)
+    # The handler module must NOT be imported by discovery (no code execution to list).
+    sys.modules.pop("tests.fixtures.templates.echo.handler", None)
     discover_templates(FIXTURES)
-    assert "tests.fixtures.templates.echo.producer" not in sys.modules
+    assert "tests.fixtures.templates.echo.handler" not in sys.modules
 
 
 def test_get_template_by_name():
@@ -44,8 +45,8 @@ def test_get_template_by_name():
 
 def test_validate_params_fills_defaults_and_coerces():
     echo = get_template("echo", FIXTURES)
-    out = validate_params(echo, {"url": "https://example.com", "backfill": "recent"})
-    assert out == {"url": "https://example.com", "backfill": "recent"}
+    out = validate_params(echo, {"url": "https://example.com", "mode": "all"})
+    assert out == {"url": "https://example.com", "mode": "all", "limit": 10}
 
 
 def test_validate_params_requires_required():
@@ -57,7 +58,7 @@ def test_validate_params_requires_required():
 def test_validate_params_uses_default_value():
     echo = get_template("echo", FIXTURES)
     out = validate_params(echo, {"url": "https://example.com"})
-    assert out == {"url": "https://example.com", "backfill": "all"}  # default backfill
+    assert out == {"url": "https://example.com", "mode": "recent", "limit": 10}  # defaults
 
 
 def test_load_entrypoint_imports_callable():
