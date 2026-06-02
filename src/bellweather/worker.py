@@ -5,7 +5,7 @@ from psycopg.types.json import Jsonb
 import bellweather.extractors.gdelt_gkg  # noqa: F401  (registers the extractor)
 import bellweather.normalizers.numeric_series  # noqa: F401  (registers the normalizer)
 from bellweather.db import get_conn
-from bellweather.extractors import get_extractor
+from bellweather.extractors import ExtractionResult, get_extractor
 from bellweather.gold import upsert_coverage, upsert_value
 from bellweather.normalizers import get_normalizer
 from bellweather.queue import Job, ack, fail, lease
@@ -48,7 +48,12 @@ def process_job(conn, job: Job) -> None:
         ack(conn, job.id)
         return
     envelope = get_bronze_store().get(payload_uri)
-    for t in extractor.extract(envelope):
+    result = extractor.extract(envelope)
+    if isinstance(result, ExtractionResult):
+        ex_tags, ex_obs = result.tags, result.observations
+    else:
+        ex_tags, ex_obs = result, []  # legacy list[ExtractedTag] — GDELT path unchanged
+    for t in ex_tags:
         conn.execute(
             "insert into tags(raw_record_id, source, observed_at, tag_type, raw_value, score)"
             " values (%s,%s,%s,%s,%s,%s)",
@@ -56,6 +61,16 @@ def process_job(conn, job: Job) -> None:
         )
         if t.tag_type != "tone":
             upsert_coverage(conn, source, t.tag_type, t.raw_value, fetched_at)
+    for o in ex_obs:
+        upsert_value(
+            conn,
+            o.symbol_key,
+            o.symbol_kind,
+            o.ts,
+            o.value,
+            unit=o.unit,
+            description=o.description,
+        )
     conn.execute("update raw_records set status='processed' where id=%s", (job.raw_record_id,))
     ack(conn, job.id)
 

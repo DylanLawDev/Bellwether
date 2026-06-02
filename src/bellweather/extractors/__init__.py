@@ -1,5 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
+
+from bellweather.normalizers import NormalizedPoint  # reuse the gold-value point shape
 
 
 @dataclass
@@ -9,11 +11,17 @@ class ExtractedTag:
     score: dict
 
 
+@dataclass
+class ExtractionResult:
+    tags: list["ExtractedTag"] = field(default_factory=list)
+    observations: list[NormalizedPoint] = field(default_factory=list)
+
+
 @runtime_checkable
 class Extractor(Protocol):
     content_type: str
 
-    def extract(self, envelope: dict) -> list["ExtractedTag"]: ...
+    def extract(self, envelope: dict) -> "list[ExtractedTag] | ExtractionResult": ...
 
 
 _REGISTRY: dict[str, Extractor] = {}
