@@ -21,20 +21,21 @@ def test_discover_finds_echo_with_params():
     assert "echo" in found  # sibling fixture templates (e.g. echo_series) may coexist
     echo = found["echo"]
     assert isinstance(echo, Template)
-    assert echo.entrypoint == "echo.producer:run"
-    assert echo.description == "Fixture template: emits a numeric-series-v1 submission from params."
+    assert echo.entrypoint == "tests.fixtures.templates.echo.handler:run"
+    assert echo.description == "Echo template for tests"
     assert echo.default_interval_seconds == 1800
     by_name = {p.name: p for p in echo.params}
-    assert isinstance(by_name["symbol_key"], TemplateParam)
-    assert by_name["symbol_key"].required is True and by_name["symbol_key"].type == "str"
-    assert by_name["value"].type == "float" and by_name["value"].default == 0.5
+    assert isinstance(by_name["url"], TemplateParam)
+    assert by_name["url"].required is True and by_name["url"].type == "str"
+    assert by_name["mode"].default == "recent" and by_name["mode"].choices == ["all", "recent"]
+    assert by_name["limit"].type == "int" and by_name["limit"].default == 10
 
 
 def test_discovery_does_not_import_entrypoint():
-    # The producer module must NOT be imported by discovery (no code execution to list).
-    sys.modules.pop("echo.producer", None)
+    # The handler module must NOT be imported by discovery (no code execution to list).
+    sys.modules.pop("tests.fixtures.templates.echo.handler", None)
     discover_templates(FIXTURES)
-    assert "echo.producer" not in sys.modules
+    assert "tests.fixtures.templates.echo.handler" not in sys.modules
 
 
 def test_get_template_by_name():
@@ -44,20 +45,20 @@ def test_get_template_by_name():
 
 def test_validate_params_fills_defaults_and_coerces():
     echo = get_template("echo", FIXTURES)
-    out = validate_params(echo, {"symbol_key": "s:1", "value": "0.75"})
-    assert out == {"symbol_key": "s:1", "value": 0.75}  # default + float coercion
+    out = validate_params(echo, {"url": "http://x", "limit": "25"})
+    assert out == {"url": "http://x", "mode": "recent", "limit": 25}  # default + int coercion
 
 
 def test_validate_params_requires_required():
     echo = get_template("echo", FIXTURES)
     with pytest.raises(ValueError):
-        validate_params(echo, {})  # missing required `symbol_key`
+        validate_params(echo, {"mode": "all"})  # missing required `url`
 
 
-def test_validate_params_uses_default_value():
+def test_validate_params_rejects_bad_choice():
     echo = get_template("echo", FIXTURES)
-    out = validate_params(echo, {"symbol_key": "s:1"})
-    assert out == {"symbol_key": "s:1", "value": 0.5}  # default value
+    with pytest.raises(ValueError):
+        validate_params(echo, {"url": "http://x", "mode": "weekly"})  # not in choices
 
 
 def test_load_entrypoint_imports_callable():

@@ -28,18 +28,18 @@ def test_run_subprocess_passes_only_api_url_in_env(monkeypatch):
     ]
     env = kwargs["env"]
     assert env["BELLWEATHER_API_URL"] == "http://api.example:8000"
-    assert "PATH" in env
+    assert "PATH" in env and "PYTHONPATH" in env
     # The child must be able to discover the template and import its entrypoint.
-    assert "BELLWEATHER_TEMPLATES_DIR" in env
-    assert env["PYTHONPATH"]
-    # K4: never the spine's DB/bucket credentials.
-    assert "DATABASE_URL" not in env
-    assert "BELLWEATHER_BUCKET" not in env
+    assert env["BELLWEATHER_TEMPLATES_DIR"]
+    # K4: the REAL datastore creds must NOT leak — only inert placeholders are passed.
+    assert env["DATABASE_URL"] == "postgresql://unused/unused"
+    assert env["DATABASE_URL"] != "postgresql://localhost/should_not_leak"
+    assert env["BELLWEATHER_BUCKET"] == "unused"
     assert kwargs["capture_output"] is True and kwargs["text"] is True
     assert kwargs["timeout"] == 600
 
 
-def test_child_env_omits_spine_creds_but_keeps_discovery(monkeypatch):
+def test_child_env_passes_inert_placeholders_never_real_creds(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/should_not_leak")
     monkeypatch.setenv("BELLWEATHER_BUCKET", "should-not-leak")
     monkeypatch.setenv("BELLWEATHER_API_URL", "http://api.example:8000")
@@ -51,8 +51,9 @@ def test_child_env_omits_spine_creds_but_keeps_discovery(monkeypatch):
     assert env["BELLWEATHER_TEMPLATES_DIR"] == "tests/fixtures/templates"
     assert env["PYTHONPATH"]
     assert "PATH" in env
-    assert "DATABASE_URL" not in env
-    assert "BELLWEATHER_BUCKET" not in env
+    # K4: inert placeholders, not the real spine credentials
+    assert env["DATABASE_URL"] == "postgresql://unused/unused"
+    assert env["BELLWEATHER_BUCKET"] == "unused"
 
 
 def _cleanup(conn, name):

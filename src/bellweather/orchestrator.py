@@ -9,14 +9,15 @@ from bellweather.db import get_conn
 
 
 def _child_env() -> dict[str, str]:
-    """Minimal environment for a spawned template subprocess (K4).
+    """Minimal environment for a spawned template subprocess (K4 isolation).
 
-    Carries the ingest URL, the templates dir (so the child can *discover* the
-    template), PATH, and PYTHONPATH (so the entrypoint module is importable —
-    fixture entrypoints are dotted ``tests.fixtures...`` paths and real
-    producers live under the templates dir, both relative to cwd). It
-    deliberately omits ``DATABASE_URL`` / ``BELLWEATHER_BUCKET``: a spawned
-    customer script never receives the spine's DB/bucket credentials.
+    The child gets the real ingest URL + templates dir (so it can discover and
+    POST), PYTHONPATH=cwd so a full-dotted entrypoint module imports under the
+    bellweather console script, and inert placeholder DATABASE_URL /
+    BELLWEATHER_BUCKET. Those two are required for Settings to instantiate, but
+    the script must never reach the real datastore — it only POSTs to /ingest
+    via its injected client, so the dummy DSN/bucket are never connected to.
+    The REAL credentials are never passed (K4).
     """
     s = get_settings()
     return {
@@ -24,6 +25,8 @@ def _child_env() -> dict[str, str]:
         "BELLWEATHER_TEMPLATES_DIR": s.bellweather_templates_dir,
         "PYTHONPATH": os.environ.get("PYTHONPATH") or os.getcwd(),
         "PATH": os.environ["PATH"],
+        "DATABASE_URL": "postgresql://unused/unused",
+        "BELLWEATHER_BUCKET": "unused",
     }
 
 
