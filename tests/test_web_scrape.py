@@ -54,15 +54,15 @@ def _api(httpserver, monkeypatch):
     httpserver.expect_request("/api/scrape-specs", method="POST").respond_with_json(
         dict(_SPEC_ROW, id=7)
     )
-    httpserver.expect_request(
-        "/api/scrape-specs/demo-prices", method="GET"
-    ).respond_with_json(_SPEC_FULL)
-    httpserver.expect_request(
-        "/api/scrape-specs/demo-prices", method="PATCH"
-    ).respond_with_json(dict(_SPEC_ROW, enabled=False))
-    httpserver.expect_request(
-        "/api/scrape-specs/demo-prices", method="DELETE"
-    ).respond_with_json({"status": "deleted"})
+    httpserver.expect_request("/api/scrape-specs/demo-prices", method="GET").respond_with_json(
+        _SPEC_FULL
+    )
+    httpserver.expect_request("/api/scrape-specs/demo-prices", method="PATCH").respond_with_json(
+        dict(_SPEC_ROW, enabled=False)
+    )
+    httpserver.expect_request("/api/scrape-specs/demo-prices", method="DELETE").respond_with_json(
+        {"status": "deleted"}
+    )
     # The preview body carries the url unwrapped under "url".
     httpserver.expect_request(
         "/api/scrape-specs/demo-prices/preview",
