@@ -67,12 +67,35 @@ resource "google_secret_manager_secret_iam_member" "db_url_access" {
   member    = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+# --- Orchestrator service account (untrusted-template spawner) ---
+# Separate identity from the runtime SA so the Anthropic key can be scoped to the
+# trusted spine ONLY (api + worker). The orchestrator spawns external templates
+# (the scrape collector et al.) as subprocesses; on Cloud Run those inherit this
+# SA's ADC via the metadata server regardless of the minimal child env, so any
+# secret this SA can read is effectively reachable by an external template. It is
+# therefore granted ONLY the DATABASE_URL secret (it reads producer_schedules /
+# writes producer_runs) and is deliberately NOT granted the Anthropic key
+# (K1/K4 — the collector must never reach the LLM key; extraction is worker-side).
+resource "google_service_account" "orchestrator" {
+  account_id   = "bellweather-orchestrator"
+  display_name = "Bellweather orchestrator (template spawner)"
+}
+
+resource "google_secret_manager_secret_iam_member" "orchestrator_db_url_access" {
+  secret_id = google_secret_manager_secret.db_url.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.orchestrator.email}"
+}
+
 # --- ANTHROPIC_API_KEY secret (LLM scrape engine, T42) ---
 # Mirrors the DATABASE_URL secret trio. The key is the first paid RUNTIME
 # dependency (design D-b) and lives ONLY in the trusted spine: the worker Job
 # (runs LlmScrapeExtractor, T38) and the api service (in-process dry-run
-# preview, T39). The orchestrator Job and the collector it spawns never get it
-# (K1/K4 — the collector only fetches + POSTs the raw page; the LLM runs worker-side).
+# preview, T39), both of which run as the runtime SA. The orchestrator runs as a
+# SEPARATE SA (google_service_account.orchestrator) that is NOT granted this
+# secret, so neither the orchestrator nor the collector it spawns can read the
+# key via ADC — env-var omission alone is insufficient because Cloud Run ADC is
+# ambient via the metadata server (K1/K4 — the LLM runs worker-side).
 resource "google_secret_manager_secret" "anthropic_key" {
   secret_id = "bellweather-anthropic-api-key"
   replication {
@@ -86,6 +109,8 @@ resource "google_secret_manager_secret_version" "anthropic_key" {
   secret_data = var.anthropic_api_key
 }
 
+# Granted ONLY to the runtime SA (api + worker — the trusted spine). The
+# orchestrator SA is intentionally excluded so spawned templates cannot read it.
 resource "google_secret_manager_secret_iam_member" "anthropic_key_access" {
   secret_id = google_secret_manager_secret.anthropic_key.id
   role      = "roles/secretmanager.secretAccessor"
@@ -233,17 +258,20 @@ resource "google_cloud_run_v2_job" "worker" {
 }
 
 # --- Orchestrator (Cloud Run Job: `bellweather orchestrate --once`) ---
-# Mirrors the worker Job: same runtime SA, same DATABASE_URL secret. It reads the
-# schedule registry and spawns each due template as a subprocess. The SCRIPTS it
-# spawns get only BELLWEATHER_API_URL (no DB/bucket creds, K4); the orchestrator
-# itself needs the DB to read producer_schedules / write producer_runs.
+# Runs as its OWN service account (google_service_account.orchestrator), NOT the
+# runtime SA, so the Anthropic key stays scoped to the trusted spine (api +
+# worker). It reads the schedule registry and spawns each due template as a
+# subprocess. The SCRIPTS it spawns get only BELLWEATHER_API_URL (no DB/bucket
+# creds, K4) AND, because they share this Job's ambient ADC, only the secrets
+# this SA can read — DATABASE_URL only, never the LLM key (K1/K4). The
+# orchestrator itself needs the DB to read producer_schedules / write producer_runs.
 resource "google_cloud_run_v2_job" "orchestrator" {
   name                = "bellweather-orchestrator"
   location            = var.region
   deletion_protection = false
   template {
     template {
-      service_account = google_service_account.runtime.email
+      service_account = google_service_account.orchestrator.email
       containers {
         image   = var.image
         command = ["bellweather", "orchestrate", "--once"]
@@ -281,7 +309,7 @@ resource "google_cloud_run_v2_job" "orchestrator" {
   depends_on = [
     google_project_service.apis,
     google_secret_manager_secret_version.db_url,
-    google_secret_manager_secret_iam_member.db_url_access,
+    google_secret_manager_secret_iam_member.orchestrator_db_url_access,
   ]
 }
 
