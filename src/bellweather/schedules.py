@@ -89,6 +89,7 @@ def update_schedule(conn: Connection, schedule_id: int, **fields) -> None:
 
 
 def delete_schedule(conn: Connection, schedule_id: int) -> None:
+    conn.execute("delete from producer_runs where schedule_id = %s", (schedule_id,))
     conn.execute("delete from producer_schedules where id = %s", (schedule_id,))
 
 
@@ -117,11 +118,21 @@ def due_schedules(conn: Connection) -> list[dict]:
     )
 
 
-def claim(conn: Connection, schedule_id: int) -> None:
-    conn.execute(
-        "update producer_schedules set last_run_at = now(), force_run = false where id = %s",
+def claim(conn: Connection, schedule_id: int) -> bool:
+    """Atomically claim a due schedule. Returns True if claimed, False if already claimed."""
+    cur = conn.execute(
+        """update producer_schedules
+           set last_run_at = now(), force_run = false
+           where id = %s
+             and enabled
+             and (
+               force_run
+               or last_run_at is null
+               or last_run_at + (interval_seconds || ' seconds')::interval <= now()
+             )""",
         (schedule_id,),
     )
+    return cur.rowcount > 0
 
 
 def start_run(conn: Connection, *, schedule_id: int, template: str, params: dict) -> int:
