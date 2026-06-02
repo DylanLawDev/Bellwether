@@ -278,6 +278,12 @@ Stacks B and C are **independent of each other** and both build on the infra (St
 | T31 | Polymarket template | manifest + `run(params, client)` → `numeric-series-v1`; snapshot idempotency key |
 | T32 | Polymarket demo schedule + verify | seed the `us-x-iran-…` example; schedule→orchestrate→normalizer→observations→UI |
 
+**Phase-2 locked seams** (defined once here; both stacks consume verbatim — these were the cross-ticket drift points):
+- **GDELT template param = `url`** — T28 manifest `[params] url`; entrypoint `run(params, client)` reads `params["url"]`; the CLI/manual helper is `run_path(path_or_url, client)`. T29's `seed-gdelt-demo` MUST seed `params={"url": ...}`.
+- **`producers/polymarket/fetch.py` contract** (T30 ships, T31 imports — exact names/types): `@dataclass Variant(token_id, outcome, question, group_item_title, condition_id)`; `@dataclass PricePoint(ts: datetime, value: float)`; `event_slug_from_url(url) -> str`; `fetch_variants(slug) -> list[Variant]` (Gamma `GET /events?slug=` **array form, take first**; decode JSON-encoded `outcomes`/`clobTokenIds`); `fetch_price_history(token_id, *, interval="max", fidelity=60) -> list[PricePoint]` (CLOB `prices-history`). All network behind `_get`; tests use fixtures only.
+- **Two independent demo seed commands** (stacks never share `cli.py` surface, merge in any order): Stack B → `bellweather seed-gdelt-demo` (T29); Stack C → `bellweather seed-polymarket-demo` (T32). Each self-contained + idempotent (name-exists guard, plain `created:`/`skip:` output).
+- **Polymarket payload (T31):** `kind="structured"`, `content_type="numeric-series-v1"`, `source="polymarket"`, `symbol_key=f"polymarket:{slug}:{token_id}"`, `symbol_kind="market-probability"`, `unit="probability"`; idempotency `idempotency_key=f"{symbol_key}:{sha1(canonical-json(points))}"`.
+
 **Phase-1 end-to-end done:** with a fixture template registered and a due schedule, `bellweather orchestrate --once` spawns the script (minimal env), its fixture `numeric-series-v1` submission flows API→queue→worker→an `observations` row; the UI lists/previews/force-runs the schedule; `make check` green.
 
 ---
