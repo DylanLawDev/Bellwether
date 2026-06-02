@@ -279,3 +279,166 @@ def get_settings_view() -> list[dict]:
             "note": "Gold observation bucket granularity (hour | 15min).",
         },
     ]
+
+
+# --- producer orchestrator control plane (T26) ------------------------------
+# Two fixture templates so the UI's "Add usage" form + preview have a schema to
+# render offline. `echo` exercises the structured (numeric-series-v1) path.
+_TEMPLATES = [
+    {
+        "name": "gdelt",
+        "description": "GDELT GKG collector (unstructured).",
+        "default_interval_seconds": 1800,
+        "params": [
+            {
+                "name": "url",
+                "type": "str",
+                "required": True,
+                "default": None,
+                "choices": None,
+                "help": "GKG file URL or local path.",
+            },
+            {
+                "name": "backfill",
+                "type": "str",
+                "required": False,
+                "default": "all",
+                "choices": ["all", "recent"],
+                "help": "How far back to fetch.",
+            },
+        ],
+    },
+    {
+        "name": "echo",
+        "description": "Fixture numeric-series-v1 producer (Phase-1 demo).",
+        "default_interval_seconds": 3600,
+        "params": [
+            {
+                "name": "n",
+                "type": "int",
+                "required": False,
+                "default": 1,
+                "choices": None,
+                "help": "How many points to emit.",
+            },
+        ],
+    },
+]
+
+_SCHEDULES_STATE: list[dict] = [
+    {
+        "id": 1,
+        "name": "gdelt-hourly",
+        "template": "gdelt",
+        "params": {"url": "http://data.gdeltproject.org/...", "backfill": "all"},
+        "interval_seconds": 3600,
+        "enabled": True,
+        "force_run": False,
+        "last_run_at": _now_hour() - timedelta(minutes=20),
+    }
+]
+_RUNS_STATE: list[dict] = [
+    {
+        "id": 1,
+        "schedule_id": 1,
+        "template": "gdelt",
+        "started_at": _now_hour() - timedelta(minutes=20),
+        "finished_at": _now_hour() - timedelta(minutes=19),
+        "status": "ok",
+        "submitted": 412,
+        "error": None,
+    }
+]
+_NEXT_ID = {"schedule": 2, "run": 2}
+
+
+def _schedules_frame() -> pd.DataFrame:
+    rows = [{c: s[c] for c in contract.SCHEDULE_COLUMNS} for s in _SCHEDULES_STATE]
+    return pd.DataFrame(rows, columns=contract.SCHEDULE_COLUMNS)
+
+
+def get_schedules() -> pd.DataFrame:
+    return _schedules_frame()
+
+
+def get_templates() -> list[dict]:
+    return [dict(t, params=[dict(p) for p in t["params"]]) for t in _TEMPLATES]
+
+
+def get_runs(schedule_id=None) -> pd.DataFrame:
+    rows = [r for r in _RUNS_STATE if schedule_id is None or r["schedule_id"] == schedule_id]
+    rows = [{c: r[c] for c in contract.RUN_COLUMNS} for r in rows]
+    df = pd.DataFrame(rows, columns=contract.RUN_COLUMNS)
+    return df.sort_values("started_at", ascending=False, ignore_index=True) if not df.empty else df
+
+
+def create_schedule(name, template, params, interval_seconds, enabled=True) -> int:
+    sid = _NEXT_ID["schedule"]
+    _NEXT_ID["schedule"] += 1
+    _SCHEDULES_STATE.append(
+        {
+            "id": sid,
+            "name": name,
+            "template": template,
+            "params": dict(params),
+            "interval_seconds": int(interval_seconds),
+            "enabled": bool(enabled),
+            "force_run": False,
+            "last_run_at": None,
+        }
+    )
+    return sid
+
+
+def update_schedule(id, **fields) -> None:
+    allowed = {"name", "params", "interval_seconds", "enabled"}
+    for s in _SCHEDULES_STATE:
+        if s["id"] == id:
+            s.update({k: v for k, v in fields.items() if k in allowed})
+
+
+def delete_schedule(id) -> None:
+    _SCHEDULES_STATE[:] = [s for s in _SCHEDULES_STATE if s["id"] != id]
+
+
+def force_schedule(id) -> None:
+    for s in _SCHEDULES_STATE:
+        if s["id"] == id:
+            s["force_run"] = True
+
+
+def run_orchestrator_now() -> dict:
+    # Mimic the orchestrator tick: any enabled schedule that is forced (or never
+    # run) gets a recorded run; the claim consumes force_run (resets to False).
+    started = []
+    now = _now_hour()
+    for s in _SCHEDULES_STATE:
+        if not s["enabled"]:
+            continue
+        if s["force_run"] or s["last_run_at"] is None:
+            s["force_run"] = False
+            s["last_run_at"] = now
+            rid = _NEXT_ID["run"]
+            _NEXT_ID["run"] += 1
+            _RUNS_STATE.append(
+                {
+                    "id": rid,
+                    "schedule_id": s["id"],
+                    "template": s["template"],
+                    "started_at": now,
+                    "finished_at": now,
+                    "status": "ok",
+                    "submitted": 1,
+                    "error": None,
+                }
+            )
+            started.append(rid)
+    return {"started_run_ids": started}
+
+
+def preview_template(name, params) -> dict:
+    # Deterministic dry-run shape: one fictitious symbol + a single sample point.
+    return {
+        "symbols": [f"{name}:demo"],
+        "sample": [{"symbol_key": f"{name}:demo", "ts": _now_hour().isoformat(), "value": 0.5}],
+    }

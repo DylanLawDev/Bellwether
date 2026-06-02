@@ -22,6 +22,18 @@ later without any screen changing.
                                                     duration_s]
     get_ingestion_rate()               -> DataFrame[hour, records]
     get_settings_view()                -> list[dict[key, value, note]]
+    get_schedules()                    -> DataFrame[id, name, template, interval_seconds,
+                                                    enabled, force_run, last_run_at]
+    get_templates()                    -> list[dict[name, description,
+                                                    default_interval_seconds, params]]
+    get_runs(schedule_id=None)         -> DataFrame[id, schedule_id, template, started_at,
+                                                    finished_at, status, submitted, error]
+    create_schedule(name, template, params, interval_seconds, enabled=True) -> int
+    update_schedule(id, **fields)      -> None   # name|params|interval_seconds|enabled
+    delete_schedule(id)                -> None
+    force_schedule(id)                 -> None   # one-shot force_run flag
+    run_orchestrator_now()             -> dict[started_run_ids]
+    preview_template(name, params)     -> dict[symbols, sample]   # dry-run, commits nothing
 """
 
 # Column contracts, importable by both backends and tests so the shapes stay in sync.
@@ -59,3 +71,25 @@ TAG_COLUMNS = [
 WORKER_RUN_COLUMNS = ["run_at", "leased", "processed", "failed", "duration_s"]
 INGESTION_RATE_COLUMNS = ["hour", "records"]
 QUEUE_STATES = ["pending", "leased", "done", "failed"]
+
+# Producer orchestrator control plane (T26). `last_run_at`/`started_at`/`finished_at`
+# are timestamps (None until set); `params` is carried per-template, not a column here.
+SCHEDULE_COLUMNS = [
+    "id",
+    "name",
+    "template",
+    "interval_seconds",
+    "enabled",
+    "force_run",
+    "last_run_at",
+]
+RUN_COLUMNS = [
+    "id",
+    "schedule_id",
+    "template",
+    "started_at",
+    "finished_at",
+    "status",
+    "submitted",
+    "error",
+]

@@ -114,3 +114,62 @@ def get_ingestion_rate() -> pd.DataFrame:
 
 def get_settings_view() -> list[dict]:
     return _get("/api/config")
+
+
+def _request(method: str, path: str, json: dict | None = None, **params) -> object:
+    """Issue ``method {bellweather_api_url}{path}`` and return parsed JSON.
+
+    Mirrors ``_get`` but covers the write verbs (POST/PATCH/DELETE) the Schedules
+    control plane needs. ``None`` query params are dropped; the base URL is read
+    at call time via ``UISettings`` (no DB/GCS secrets needed).
+    """
+    clean = {k: v for k, v in params.items() if v is not None}
+    base = get_ui_settings().bellweather_api_url
+    with httpx.Client(base_url=base, timeout=_TIMEOUT) as client:
+        resp = client.request(method, path, json=json, params=clean)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def get_schedules() -> pd.DataFrame:
+    return _frame(_get("/api/schedules"), contract.SCHEDULE_COLUMNS, ts_cols=("last_run_at",))
+
+
+def get_templates() -> list[dict]:
+    return _get("/api/templates")
+
+
+def get_runs(schedule_id=None) -> pd.DataFrame:
+    rows = _get("/api/runs", schedule_id=schedule_id)
+    return _frame(rows, contract.RUN_COLUMNS, ts_cols=("started_at", "finished_at"))
+
+
+def create_schedule(name, template, params, interval_seconds, enabled=True) -> int:
+    body = {
+        "name": name,
+        "template": template,
+        "params": params,
+        "interval_seconds": int(interval_seconds),
+        "enabled": bool(enabled),
+    }
+    return _request("POST", "/api/schedules", json=body)["id"]
+
+
+def update_schedule(id, **fields) -> None:
+    _request("PATCH", f"/api/schedules/{id}", json=fields)
+
+
+def delete_schedule(id) -> None:
+    _request("DELETE", f"/api/schedules/{id}")
+
+
+def force_schedule(id) -> None:
+    _request("POST", f"/api/schedules/{id}/force")
+
+
+def run_orchestrator_now() -> dict:
+    return _request("POST", "/api/orchestrator/run")
+
+
+def preview_template(name, params) -> dict:
+    return _request("POST", f"/api/templates/{name}/preview", json={"params": params})
