@@ -78,9 +78,11 @@ def _api(httpserver, monkeypatch):
         {"ok": True}
     )
     httpserver.expect_request("/api/templates", method="GET").respond_with_json(_TEMPLATES)
-    httpserver.expect_request("/api/templates/gdelt/preview", method="POST").respond_with_json(
-        _PREVIEW
-    )
+    # Match the unwrapped params body — a regression to {"params": {...}} would
+    # not match this handler and the test would fail.
+    httpserver.expect_request(
+        "/api/templates/gdelt/preview", method="POST", json={"url": "x"}
+    ).respond_with_json(_PREVIEW)
     httpserver.expect_request("/api/orchestrator/run", method="POST").respond_with_json(
         {"started_run_ids": [9]}
     )

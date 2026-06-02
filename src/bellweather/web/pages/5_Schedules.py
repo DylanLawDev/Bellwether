@@ -91,11 +91,18 @@ else:
         )
         st.json(out)
     if added:
-        sid = data.create_schedule(
-            name, tpl_name, {k: v for k, v in params.items() if v != ""}, int(interval)
-        )
-        st.success(f"Created schedule #{sid}.")
-        st.rerun()
+        clean = {k: v for k, v in params.items() if v != ""}
+        # Blank required params are dropped above, so the schedule would later
+        # error at run time. Block submission and tell the operator which.
+        missing = [
+            p["name"] for p in tpl.get("params", []) if p.get("required") and p["name"] not in clean
+        ]
+        if missing:
+            st.error(f"Missing required param(s): {', '.join(missing)}")
+        else:
+            sid = data.create_schedule(name, tpl_name, clean, int(interval))
+            st.success(f"Created schedule #{sid}.")
+            st.rerun()
 
 # --- recent runs ------------------------------------------------------------
 st.subheader("Recent runs")
