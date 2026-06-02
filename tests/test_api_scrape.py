@@ -142,6 +142,20 @@ def test_patch_updates_fields():
     assert client.get(f"/api/scrape-specs/{created['name']}").json()["enabled"] is False
 
 
+def test_patch_explicit_null_clears_nullable_field():
+    # An explicit null on a nullable field must persist (not be dropped): set
+    # llm_model, then PATCH it back to null to fall to the settings default.
+    created = _create(llm_model="claude-haiku-4-5-20251001")
+    assert created["llm_model"] == "claude-haiku-4-5-20251001"
+    r = client.patch(f"/api/scrape-specs/{created['name']}", json={"llm_model": None})
+    assert r.status_code == 200
+    assert r.json()["llm_model"] is None
+    # Omitted fields are untouched; the explicit null landed in the DB.
+    fresh = client.get(f"/api/scrape-specs/{created['name']}").json()
+    assert fresh["llm_model"] is None
+    assert fresh["enabled"] is True  # never sent → unchanged
+
+
 def test_delete_removes_spec():
     created = _create()
     r = client.delete(f"/api/scrape-specs/{created['name']}")

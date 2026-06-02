@@ -543,7 +543,11 @@ def api_create_scrape_spec(body: ScrapeSpecCreate):
 
 @api_router.patch("/scrape-specs/{name}", response_model=ScrapeSpecRow)
 def api_update_scrape_spec(name: str, body: ScrapeSpecPatch):
-    fields = body.model_dump(exclude_none=True)
+    # exclude_unset (not exclude_none): a PATCH that explicitly sends a nullable
+    # field as null (e.g. {"llm_model": null} to fall back to the settings default,
+    # or {"description": null} to clear it) must reach update_spec, while omitted
+    # fields stay untouched. exclude_none would silently drop those explicit nulls.
+    fields = body.model_dump(exclude_unset=True)
     with get_conn() as conn:
         if scrape_specs.get_spec(conn, name) is None:
             raise HTTPException(status_code=404, detail="unknown scrape spec")
