@@ -204,12 +204,13 @@ def orchestrate(once: bool = False) -> None:
 
 **orchestrator.py**:
 ```python
+def _child_env() -> dict: ...      # K4 minimal env for the spawned subprocess (see contract below); reused by T25 preview
 def tick(conn) -> list[int]: ...   # for s in due_schedules: claim+commit; rid=start_run+commit;
                                    #   try: summary=_run_subprocess(...); finish_run('ok', submitted)
                                    #   except: finish_run('error', error); commit
 def _run_subprocess(template: str, params: dict, *, timeout: int = 600) -> dict: ...
     # subprocess.run(["bellweather","run-template","--template",template,"--params",json.dumps(params)],
-    #   env={"BELLWEATHER_API_URL": get_settings().bellweather_api_url, "PATH": os.environ["PATH"]},  # NO db/bucket
+    #   env=_child_env(),  capture_output=True, text=True, timeout=timeout) ; json.loads(last stdout line)
     #   capture_output=True, text=True, timeout=timeout) ; json.loads(last stdout line)
 def run_orchestrator(once: bool = False) -> None: ...   # loop tick() with get_conn(); sleep when idle
 ```
@@ -221,6 +222,13 @@ def run_orchestrator(once: bool = False) -> None: ...   # loop tick() with get_c
 `SCHEDULE_COLUMNS = [id, name, template, interval_seconds, enabled, force_run, last_run_at]`;
 `RUN_COLUMNS = [id, schedule_id, template, started_at, finished_at, status, submitted, error]`;
 `get_schedules()`, `get_templates()`, `get_runs(schedule_id=None)`, `create_schedule(...)`, `update_schedule(id, **)`, `delete_schedule(id)`, `force_schedule(id)`, `run_orchestrator_now()`, `preview_template(name, params)`.
+
+**Template subprocess + preview contract (locked — these are the cross-ticket seams; keep them byte-identical across T22–T26):**
+- **Spawn:** the orchestrator (T24) AND the preview endpoint (T25) spawn the **`bellweather` console script** (`run-template [--dry-run]`) — never `python -m bellweather.cli` (no `__main__` guard → emits nothing) — with `env=orchestrator._child_env()`.
+- **`_child_env()`** (defined in `orchestrator.py`, imported by `api.py`): `PATH`, `PYTHONPATH=os.getcwd()`, real `BELLWEATHER_API_URL` + `BELLWEATHER_TEMPLATES_DIR`, and inert placeholders `DATABASE_URL="postgresql://unused/unused"` + `BELLWEATHER_BUCKET="unused"`. The placeholders let the child's `Settings` instantiate **without** the real datastore creds (K4) — the script only POSTs to `/ingest`.
+- **Preview request body** = the raw params dict (FastAPI binds the whole JSON body to `params: dict`); `live.preview_template` posts `json=params` (no `{"params": ...}` wrapper).
+- **Preview response** = `{submitted, symbols, sample[{symbol_key, ts, value}]}`. T25 reshapes the run-template dry-run summary into this; `mock` + `live` + the UI page all use this exact shape.
+- **Test fixtures (no collision):** T22 owns `tests/fixtures/templates/echo/` (handler; discovery/validate); T23 owns `tests/fixtures/templates/echo_series/` (producer; emits `numeric-series-v1`), reused by T25's real preview smoke test. Entrypoints are full dotted paths from the repo root (`tests.fixtures.templates.<name>.<module>:run`); discovery tests assert membership (`"echo" in found`), never an exact set.
 
 ---
 

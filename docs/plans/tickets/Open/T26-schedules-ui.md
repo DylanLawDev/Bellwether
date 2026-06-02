@@ -459,7 +459,9 @@ def run_orchestrator_now() -> dict:
 
 
 def preview_template(name, params) -> dict:
-    return _request("POST", f"/api/templates/{name}/preview", json={"params": params})
+    # T25 binds the raw JSON body to `params` (no wrapper), so post the dict directly.
+    # Returns the canonical {submitted, symbols, sample} shape (same as mock).
+    return _request("POST", f"/api/templates/{name}/preview", json=params)
 ```
 
 - [ ] **Step 6: Re-export through the seam** in `src/bellweather/web/data/__init__.py` — add nine bindings after `get_settings_view = _b.get_settings_view` and extend `__all__`:

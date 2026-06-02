@@ -25,10 +25,10 @@ Copied verbatim from the build plan ("Locked interfaces" → `orchestrator.py` /
 def tick(conn) -> list[int]: ...   # for s in due_schedules: claim+commit; rid=start_run+commit;
                                    #   try: summary=_run_subprocess(...); finish_run('ok', submitted)
                                    #   except: finish_run('error', error); commit
+def _child_env() -> dict: ...      # minimal env for a spawned template subprocess (K4)
 def _run_subprocess(template: str, params: dict, *, timeout: int = 600) -> dict: ...
     # subprocess.run(["bellweather","run-template","--template",template,"--params",json.dumps(params)],
-    #   env={"BELLWEATHER_API_URL": get_settings().bellweather_api_url, "PATH": os.environ["PATH"]},  # NO db/bucket
-    #   capture_output=True, text=True, timeout=timeout) ; json.loads(last stdout line)
+    #   env=_child_env(), capture_output=True, text=True, timeout=timeout) ; json.loads(last stdout line)
 def run_orchestrator(once: bool = False) -> None: ...   # loop tick() with get_conn(); sleep when idle
 ```
 ```python
@@ -48,8 +48,10 @@ def finish_run(conn, run_id: int, *, status: str, submitted: int | None = None, 
 
 ## Steps
 
-- [ ] **Step 1: Env-isolation test (no DB needed)** — add to `tests/test_orchestrator.py`. This
-  is the load-bearing K4 invariant: spawned scripts get the ingest URL but **no** DB/bucket creds.
+- [ ] **Step 1: Env-isolation test (no DB needed)** — add to `tests/test_orchestrator.py`. This is
+  the load-bearing K4 invariant: spawned scripts get the ingest URL + templates dir + a `PYTHONPATH`
+  so the entrypoint module imports, but **never the real** DB/bucket creds (only inert placeholders,
+  since `Settings` requires those fields to instantiate).
 ```python
 import json
 from unittest import mock
@@ -79,9 +81,12 @@ def test_run_subprocess_passes_only_api_url_in_env(monkeypatch):
     ]
     env = kwargs["env"]
     assert env["BELLWEATHER_API_URL"] == "http://api.example:8000"
-    assert "PATH" in env
-    assert "DATABASE_URL" not in env
-    assert "BELLWEATHER_BUCKET" not in env
+    assert env["BELLWEATHER_TEMPLATES_DIR"]            # child must discover templates
+    assert "PATH" in env and "PYTHONPATH" in env       # PYTHONPATH so the entrypoint imports
+    # K4: the REAL datastore creds must NOT leak — only inert placeholders are passed.
+    assert env["DATABASE_URL"] == "postgresql://unused/unused"
+    assert env["DATABASE_URL"] != "postgresql://localhost/should_not_leak"
+    assert env["BELLWEATHER_BUCKET"] == "unused"
     assert kwargs["capture_output"] is True and kwargs["text"] is True
     assert kwargs["timeout"] == 600
 ```
@@ -185,6 +190,29 @@ from bellweather.config import get_settings
 from bellweather.db import get_conn
 
 
+def _child_env() -> dict:
+    """Minimal environment for a spawned template subprocess (K4 isolation).
+
+    The child gets the real ingest URL + templates dir (so it can discover and
+    POST), ``PYTHONPATH=cwd`` so a full-dotted entrypoint module (e.g.
+    ``producers.gdelt.producer``) imports under the ``bellweather`` console script
+    (which does NOT add cwd to ``sys.path``), and **inert placeholder**
+    DATABASE_URL/BELLWEATHER_BUCKET. Those two are *required* for ``Settings`` to
+    instantiate, but the script must never reach the real datastore — it only POSTs
+    to ``/ingest`` via its injected client, so the dummy DSN/bucket are never
+    connected to. The REAL creds are never passed (K4).
+    """
+    s = get_settings()
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": os.getcwd(),
+        "BELLWEATHER_API_URL": s.bellweather_api_url,
+        "BELLWEATHER_TEMPLATES_DIR": s.bellweather_templates_dir,
+        "DATABASE_URL": "postgresql://unused/unused",
+        "BELLWEATHER_BUCKET": "unused",
+    }
+
+
 def _run_subprocess(template: str, params: dict, *, timeout: int = 600) -> dict:
     proc = subprocess.run(
         [
@@ -192,10 +220,7 @@ def _run_subprocess(template: str, params: dict, *, timeout: int = 600) -> dict:
             "--template", template,
             "--params", json.dumps(params),
         ],
-        env={
-            "BELLWEATHER_API_URL": get_settings().bellweather_api_url,
-            "PATH": os.environ["PATH"],
-        },  # K4: ingest URL only — never DATABASE_URL / BELLWEATHER_BUCKET
+        env=_child_env(),
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -252,9 +277,10 @@ def orchestrate(once: bool = False):
 
 ## Acceptance criteria
 - `_run_subprocess` invokes `["bellweather","run-template","--template",t,"--params",json.dumps(p)]`
-  with `env` containing exactly `BELLWEATHER_API_URL` + `PATH` — **no** `DATABASE_URL` or
-  `BELLWEATHER_BUCKET` (K4 isolation), `capture_output=True`, `text=True`, `timeout=600` default —
-  and parses the last non-blank stdout line as the JSON summary.
+  with `env=_child_env()` — real `BELLWEATHER_API_URL` + `BELLWEATHER_TEMPLATES_DIR` + `PATH` +
+  `PYTHONPATH=cwd`, and **inert placeholder** `DATABASE_URL`/`BELLWEATHER_BUCKET` (the real datastore
+  creds never leak — K4), `capture_output=True`, `text=True`, `timeout=600` default — and parses the
+  last non-blank stdout line as the JSON summary.
 - `tick(conn)` claims each due schedule (committing the claim, which sets `last_run_at` and clears
   `force_run`) before spawning; on success records a `producer_runs` row `status="ok"` with
   `submitted` from the summary; on exception records `status="error"` with the message; returns the

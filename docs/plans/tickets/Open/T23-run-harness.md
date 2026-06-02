@@ -10,7 +10,7 @@ Build the in-subprocess **run-harness** that executes a template: discover its m
 - Modify: `src/bellweather/client.py` — add `DryRunClient` (same surface as `BellwetherClient`, no HTTP).
 - Modify: `src/bellweather/cli.py` — add the `run-template` command (the harness).
 - Test: `tests/test_run_template.py` — `DryRunClient` capture behavior + the `run-template --dry-run` CLI via `typer.testing.CliRunner`, pointing `BELLWEATHER_TEMPLATES_DIR` at a fixture template dir.
-- Test (fixture): `tests/fixtures/templates/echo/template.toml` + `tests/fixtures/templates/echo/producer.py` — a template whose `run(params, client)` builds a `numeric-series-v1` `Submission` and calls `client.ingest_batch`.
+- Test (fixture): `tests/fixtures/templates/echo_series/template.toml` + `tests/fixtures/templates/echo_series/producer.py` — a template whose `run(params, client)` builds a `numeric-series-v1` `Submission` and calls `client.ingest_batch`. **Its own dir, distinct from T22's `echo/`**, so the two fixtures never collide; the entrypoint is a full dotted path (`tests.fixtures.templates.echo_series.producer:run`), importable like the existing `tests.*` fixtures — no `sys.path` manipulation.
 
 ## Interface
 From the build plan's **Locked interfaces** (copy verbatim — do not rename).
@@ -49,10 +49,10 @@ Entrypoint contract (manifest's `entrypoint = "module:func"`): `def run(params: 
 
 > No DB, no GCS, no network in this ticket — `DryRunClient` performs zero I/O and the harness test only exercises `--dry-run`. `make up`/`make migrate` are NOT required.
 
-- [ ] **Step 1: Fixture template** `tests/fixtures/templates/echo/template.toml`
+- [ ] **Step 1: Fixture template** `tests/fixtures/templates/echo_series/template.toml` (its own dir, distinct from T22's `echo/`)
 ```toml
-name        = "echo"
-entrypoint  = "echo.producer:run"
+name        = "echo_series"
+entrypoint  = "tests.fixtures.templates.echo_series.producer:run"
 description = "Fixture template: emits a numeric-series-v1 submission from params."
 
 [params]
@@ -63,7 +63,7 @@ value      = { type = "float", default = 0.5, help = "the single point's value" 
 default_interval = "30m"
 ```
 
-- [ ] **Step 2: Fixture entrypoint** `tests/fixtures/templates/echo/producer.py` — builds a `numeric-series-v1` `Submission` and calls `client.ingest_batch` (the entrypoint is imported by `load_entrypoint("echo.producer:run")`, so the fixture dir must be importable as a top-level package path; the test puts it on `sys.path` — see Step 4).
+- [ ] **Step 2: Fixture entrypoint** `tests/fixtures/templates/echo_series/producer.py` — builds a `numeric-series-v1` `Submission` and calls `client.ingest_batch`. It is imported by `load_entrypoint("tests.fixtures.templates.echo_series.producer:run")` — a full dotted path from the repo root, importable like the existing `tests.*` fixtures, so **no `sys.path` manipulation is needed**.
 ```python
 from datetime import datetime, timezone
 
@@ -89,18 +89,7 @@ def run(params: dict, client) -> dict:
     return {"submitted": len(results)}
 ```
 
-- [ ] **Step 3: Failing test (DryRunClient)** `tests/test_run_template.py`
-```python
-import json
-
-from typer.testing import CliRunner
-
-from bellweather.cli import app
-from bellweather.client import DryRunClient
-from bellweather.contracts import Submission
-from tests.conftest import _sub  # not exported; build inline instead — see below
-```
-Replace the bad import line above with an inline submission builder, then add the `DryRunClient` test:
+- [ ] **Step 3: Failing test (DryRunClient)** `tests/test_run_template.py` — one copy-pasteable file (inline submission builder; no bad imports):
 ```python
 import json
 from datetime import datetime, timezone
@@ -139,9 +128,8 @@ def test_dry_run_client_context_manager():
     assert len(c.captured) == 1
 ```
 
-- [ ] **Step 4: Failing test (run-template CLI)** — append to `tests/test_run_template.py`. The harness imports the entrypoint by its manifest path (`echo.producer:run`), so the fixture template dir must be importable: the test prepends `tests/fixtures/templates` to `sys.path` and points `BELLWEATHER_TEMPLATES_DIR` at the same dir.
+- [ ] **Step 4: Failing test (run-template CLI)** — append to `tests/test_run_template.py`. The harness imports the entrypoint by its full dotted manifest path (`tests.fixtures.templates.echo_series.producer:run`), importable from the repo root like the existing `tests.*` fixtures — so the test only points `BELLWEATHER_TEMPLATES_DIR` at the fixtures dir; no `sys.path` manipulation.
 ```python
-import sys
 from pathlib import Path
 
 FIXTURE_TEMPLATES = Path(__file__).parent / "fixtures" / "templates"
@@ -149,12 +137,10 @@ FIXTURE_TEMPLATES = Path(__file__).parent / "fixtures" / "templates"
 
 def test_run_template_dry_run_emits_summary_with_sample(monkeypatch):
     monkeypatch.setenv("BELLWEATHER_TEMPLATES_DIR", str(FIXTURE_TEMPLATES))
-    monkeypatch.syspath_prepend(str(FIXTURE_TEMPLATES))
-    sys.modules.pop("echo.producer", None)  # avoid stale import across tests
 
     result = CliRunner().invoke(
         app,
-        ["run-template", "--template", "echo", "--dry-run",
+        ["run-template", "--template", "echo_series", "--dry-run",
          "--params", json.dumps({"symbol_key": "fixture:x", "value": 0.42})],
     )
     assert result.exit_code == 0, result.output

@@ -56,20 +56,7 @@ def _run_subprocess(template: str, params: dict, *, timeout: int = 600) -> dict:
 
 - [ ] **Step 0 (env):** `make up` (Postgres + fake-gcs) and `make migrate` (applies `0001_initial.sql` + the T21 `0002_orchestrator.sql` creating `producer_schedules`/`producer_runs`). The DB tests below need both.
 
-- [ ] **Step 1: Templates fixture dir.** Create `tests/fixtures/templates/echo/template.toml` (a discoverable, code-free manifest — discovery must not import its entrypoint):
-```toml
-name        = "echo"
-entrypoint  = "tests.fixtures.templates.echo.producer:run"
-description = "Fixture echo template for control-plane API tests"
-
-[params]
-url      = { type = "str", required = true, help = "A URL to echo" }
-backfill = { type = "str", default = "all", choices = ["all", "recent"] }
-
-[schedule]
-default_interval = "30m"
-```
-(No `producer.py` is needed for this ticket — discovery and preview/run-now never import it here. T22 owns `discover_templates`; T23/T24 own the real subprocess path. Preview and orchestrator/run are monkeypatched below.)
+- [ ] **Step 1: Reuse the existing fixture templates (create nothing).** T25 stacks on T24 → T23 → T22, so the fixtures already exist in this branch: `tests/fixtures/templates/echo/` (T22 — entrypoint `tests.fixtures.templates.echo.handler:run`, params `url`/`mode`/`limit`) and `tests/fixtures/templates/echo_series/` (T23 — entrypoint `tests.fixtures.templates.echo_series.producer:run`, emits a `numeric-series-v1` submission). Point `BELLWEATHER_TEMPLATES_DIR` at `tests/fixtures/templates` (the autouse fixture below does this). The `/templates` test reads T22's `echo`; the real preview smoke test runs T23's `echo_series`.
 
 - [ ] **Step 2: Failing test** `tests/test_control_plane_api.py` (write the whole file; DB tests assume `make up` + `make migrate`):
 ```python
@@ -128,7 +115,7 @@ def _create(name="t25-sched-a", interval_seconds=1800, enabled=True):
     body = {
         "name": name,
         "template": "echo",
-        "params": {"url": "https://example.com", "backfill": "all"},
+        "params": {"url": "https://example.com"},
         "interval_seconds": interval_seconds,
         "enabled": enabled,
     }
@@ -184,32 +171,50 @@ def test_patch_missing_schedule_is_404():
 def test_templates_lists_fixture_template():
     rows = client.get("/api/templates").json()
     echo = next(t for t in rows if t["name"] == "echo")
-    assert echo["entrypoint"] == "tests.fixtures.templates.echo.producer:run"
+    assert echo["entrypoint"] == "tests.fixtures.templates.echo.handler:run"
     assert echo["default_interval_seconds"] == 1800
     names = {p["name"] for p in echo["params"]}
-    assert {"url", "backfill"} <= names
+    assert {"url", "mode", "limit"} <= names
     url = next(p for p in echo["params"] if p["name"] == "url")
     assert url["required"] is True
 
 
-def test_preview_spawns_minimal_env_subprocess(monkeypatch):
-    # Preview must NOT run in-process. Stub _run_subprocess (the K4 minimal-env spawn)
-    # and assert the route hands it --dry-run via the dry-run path and returns its sample.
+def test_preview_route_passes_body_as_params_and_returns_shape(monkeypatch):
+    # Preview must NOT run in-process. Stub _preview_subprocess (the K4 minimal-env
+    # spawn) and assert the route binds the raw JSON body as `params` and returns its
+    # canonical {submitted, symbols, sample} shape verbatim.
     captured = {}
 
     def fake_preview(template, params):
         captured["template"] = template
         captured["params"] = params
-        return {"submitted": 2, "sample": [{"symbol_key": "demo:x", "value": 0.5}]}
+        return {
+            "submitted": 2,
+            "symbols": ["demo:x"],
+            "sample": [{"symbol_key": "demo:x", "ts": "2026-06-01T00:00:00+00:00", "value": 0.5}],
+        }
 
     monkeypatch.setattr(api, "_preview_subprocess", fake_preview)
     r = client.post("/api/templates/echo/preview", json={"url": "https://example.com"})
     assert r.status_code == 200
     body = r.json()
     assert captured["template"] == "echo"
-    assert captured["params"] == {"url": "https://example.com"}
+    assert captured["params"] == {"url": "https://example.com"}   # raw body == params (no wrapper)
     assert body["submitted"] == 2
+    assert body["symbols"] == ["demo:x"]
     assert body["sample"][0]["symbol_key"] == "demo:x"
+
+
+def test_preview_subprocess_real_dry_run_smoke():
+    # NON-monkeypatched: actually spawn `bellweather run-template --dry-run` against the
+    # T23 echo_series fixture (no DB, no API — dry-run uses DryRunClient). Exercises the
+    # whole real path: console script, _child_env (templates dir + PYTHONPATH + placeholder
+    # creds so the child's Settings instantiates), entrypoint import, capture, and the
+    # {submitted, symbols, sample} reshape.
+    out = api._preview_subprocess("echo_series", {"symbol_key": "smoke:x", "value": 0.5})
+    assert out["submitted"] == 1
+    assert out["symbols"] == ["smoke:x"]
+    assert out["sample"][0] == {"symbol_key": "smoke:x", "ts": "2026-06-01T12:00:00Z", "value": 0.5}
 
 
 def test_preview_unknown_template_is_404():
@@ -249,15 +254,12 @@ def test_runs_endpoint_lists_recent_runs():
 - [ ] **Step 4: Implement in `src/bellweather/api.py`.** Add imports and the control-plane models + routes to the existing `api_router` (do not create a second router; `app.include_router(api_router)` at the bottom already mounts it). New imports near the top:
 ```python
 import json
-import os
 import subprocess
-import sys
 
 from fastapi import HTTPException
 
 from bellweather import schedules, templates
-from bellweather.config import get_settings
-from bellweather.orchestrator import tick
+from bellweather.orchestrator import _child_env, tick
 ```
 Pydantic request/response models (place after the read models, before `api_router`):
 ```python
@@ -323,30 +325,49 @@ class TickResult(BaseModel):
 ```
 The preview helper — a module-level function so tests can monkeypatch it; it spawns the **same minimal-env subprocess** as the orchestrator (K4), never in-process:
 ```python
-def _preview_subprocess(template: str, params: dict) -> dict:
-    """Spawn `bellweather run-template --dry-run` with a minimal env (K4/K9).
+PREVIEW_SAMPLE_LIMIT = 50  # max flattened points returned by a dry-run preview
 
-    Never runs the template in-process: an in-process import would hand the
-    customer script the API's DB/bucket credentials. The subprocess gets only
-    BELLWEATHER_API_URL + PATH; its last stdout line is a JSON summary
-    ({"submitted": int, "sample": [...]}).
+
+def _preview_subprocess(template: str, params: dict) -> dict:
+    """Spawn `bellweather run-template --dry-run` with the K4 minimal env, never
+    in-process (an in-process import would hand the customer script the API's
+    DB/bucket creds).
+
+    Uses the SAME spawn contract as the orchestrator (`orchestrator._child_env`):
+    the working **`bellweather` console script** (NOT `python -m bellweather.cli`,
+    which has no `__main__` guard and emits nothing), real ingest URL + templates
+    dir + `PYTHONPATH`, and inert placeholder DB/bucket. Parses the run-template
+    dry-run summary (`{"submitted", "sample": [Submission dicts]}`) and reshapes it
+    into the canonical preview contract `{submitted, symbols, sample[{symbol_key,
+    ts, value}]}` the UI (T26) consumes — identical to the mock backend.
     """
     proc = subprocess.run(
         [
-            sys.executable, "-m", "bellweather.cli", "run-template",
+            "bellweather", "run-template",
             "--template", template, "--params", json.dumps(params), "--dry-run",
         ],
-        env={
-            "BELLWEATHER_API_URL": get_settings().bellweather_api_url,
-            "PATH": os.environ.get("PATH", ""),
-        },
+        env=_child_env(),
         capture_output=True,
         text=True,
         timeout=600,
     )
     if proc.returncode != 0:
         raise HTTPException(status_code=502, detail=proc.stderr.strip() or "preview failed")
-    return json.loads(proc.stdout.strip().splitlines()[-1])
+    summary = json.loads([ln for ln in proc.stdout.splitlines() if ln.strip()][-1])
+    symbols: list[str] = []
+    sample: list[dict] = []
+    for sub in summary.get("sample", []):
+        payload = sub.get("payload") or {}
+        key = payload.get("symbol_key")
+        if key and key not in symbols:
+            symbols.append(key)
+        for pt in payload.get("points", []):
+            sample.append({"symbol_key": key, "ts": pt.get("ts"), "value": pt.get("value")})
+    return {
+        "submitted": summary.get("submitted", 0),
+        "symbols": symbols,
+        "sample": sample[:PREVIEW_SAMPLE_LIMIT],
+    }
 ```
 The routes (add to `api_router`):
 ```python
@@ -434,10 +455,10 @@ def api_runs(schedule_id: int | None = None, limit: int = Query(50, ge=1, le=500
 ```
 Notes that keep the implementation honest:
 - The `tick` and `_preview_subprocess` names are referenced from the test as `api.tick` / `api._preview_subprocess`, so they must be module-level in `api.py` (imported `tick`, defined `_preview_subprocess`).
-- `_preview_subprocess` runs `python -m bellweather.cli run-template ... --dry-run` (T23's `run-template`); preview is **never in-process** — D2/K4/K9. The 404 guard on the template name runs before the subprocess.
+- `_preview_subprocess` runs the **`bellweather` console script** (`run-template ... --dry-run`) via `orchestrator._child_env()` — the same working spawn contract as the orchestrator (NOT `python -m bellweather.cli`, which has no `__main__` guard and emits nothing). Preview is **never in-process** — D2/K4/K9. The 404 guard on the template name runs before the subprocess, and the dry-run summary is reshaped into `{submitted, symbols, sample}`.
 - Per-request DB and `conn.commit()` after every write (schedules.py helpers never commit). `get_schedule` guards each `{id}` route → 404, matching the read-endpoint shape conventions.
 
-- [ ] **Step 5: Run → PASS.** `uv run pytest tests/test_control_plane_api.py -v` (with `make up` + `make migrate`). The preview/orchestrator tests pass without spawning anything (monkeypatched); the schedule/template/runs tests exercise real Postgres + the fixture templates dir.
+- [ ] **Step 5: Run → PASS.** `uv run pytest tests/test_control_plane_api.py -v` (with `make up` + `make migrate`). The monkeypatched preview/orchestrator tests pass without spawning; the **real** preview smoke test spawns `bellweather run-template --dry-run` against `echo_series` (needs no DB/API — dry-run uses `DryRunClient`); the schedule/template/runs tests exercise real Postgres + the fixture templates dir.
 
 - [ ] **Step 6: Full gate.** `make check` (ruff check + ruff format --check + pytest) green.
 
@@ -447,6 +468,6 @@ Notes that keep the implementation honest:
 - `POST /api/schedules` creates a `producer_schedules` row and returns it (`force_run` false, `enabled` true by default); `GET /api/schedules` lists rows whose keys are exactly `id, name, template, params, interval_seconds, enabled, force_run, last_run_at`.
 - `PATCH /api/schedules/{id}` toggles `enabled` (and accepts `name|params|interval_seconds|force_run`); `POST /api/schedules/{id}/force` sets `force_run` true; `DELETE /api/schedules/{id}` removes the row; unknown `{id}` → 404 on PATCH/DELETE/force.
 - `GET /api/templates` lists the fixture template(s) from `BELLWEATHER_TEMPLATES_DIR` with their param schemas, **without importing entrypoints**; `default_interval` is surfaced as `default_interval_seconds`.
-- `POST /api/templates/{name}/preview` spawns a **minimal-env (`BELLWEATHER_API_URL` + `PATH`) `run-template --dry-run` subprocess** (never in-process) and returns its JSON sample; unknown template → 404.
+- `POST /api/templates/{name}/preview` binds the raw JSON body as `params`, spawns a **minimal-env `bellweather run-template --dry-run` subprocess** via `orchestrator._child_env()` (never in-process; the real DB/bucket creds never leak), and returns the canonical `{submitted, symbols, sample}` shape (reshaped from the dry-run summary); unknown template → 404. A non-monkeypatched smoke test exercises the real spawn against the `echo_series` fixture.
 - `POST /api/orchestrator/run` triggers exactly one `tick(conn)` and returns its started run ids; `GET /api/runs` returns recent `producer_runs` (filterable by `schedule_id`) with the `RUN_COLUMNS` shape.
 - Routes added to the existing `api_router` (prefix `/api`) only; per-request `get_conn()` + commit after writes; schedules helpers still never commit. `make check` green.
