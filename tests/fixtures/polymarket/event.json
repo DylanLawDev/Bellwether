@@ -1,0 +1,15 @@
+[
+  {
+    "slug": "us-x-iran-permanent-peace-deal-by",
+    "title": "US x Iran permanent peace deal by ...?",
+    "markets": [
+      {
+        "question": "Will the US and Iran sign a permanent peace deal by year end?",
+        "groupItemTitle": "Permanent peace deal",
+        "conditionId": "0xabc123",
+        "outcomes": "[\"Yes\", \"No\"]",
+        "clobTokenIds": "[\"71846647...YES\", \"58726391...NO\"]"
+      }
+    ]
+  }
+]
