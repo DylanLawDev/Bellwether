@@ -1,7 +1,5 @@
 import json
-import os
 import subprocess
-import sys
 from datetime import datetime
 from typing import Annotated
 
@@ -9,11 +7,10 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 
 from bellweather import reads, schedules, templates
-from bellweather.config import get_settings
 from bellweather.contracts import IngestResult, Submission
 from bellweather.db import get_conn
 from bellweather.ingest import ingest_record
-from bellweather.orchestrator import tick
+from bellweather.orchestrator import _child_env, tick
 
 app = FastAPI(title="Bellweather Ingestion")
 
@@ -175,19 +172,42 @@ class TickResult(BaseModel):
     started_run_ids: list[int]
 
 
+def _preview_shape(summary: dict) -> dict:
+    """Flatten a dry-run summary into the control-plane preview contract.
+
+    ``run-template --dry-run`` emits ``{"submitted": int, "sample": [<Submission
+    dict>, ...]}``. The UI wants ``{"submitted", "symbols", "sample"}`` where
+    ``symbols`` is the distinct symbol keys and ``sample`` is one flat row per
+    point: ``{"symbol_key", "ts", "value"}``. Submissions without a numeric
+    ``symbol_key``/``points`` payload (e.g. unstructured) count toward
+    ``submitted`` but contribute no symbols/sample rows.
+    """
+    symbols: list[str] = []
+    sample: list[dict] = []
+    for sub in summary.get("sample", []):
+        payload = sub.get("payload") or {}
+        key = payload.get("symbol_key")
+        if key is None:
+            continue
+        if key not in symbols:
+            symbols.append(key)
+        for pt in payload.get("points", []):
+            sample.append({"symbol_key": key, "ts": pt.get("ts"), "value": pt.get("value")})
+    return {"submitted": summary.get("submitted", 0), "symbols": symbols, "sample": sample}
+
+
 def _preview_subprocess(template: str, params: dict) -> dict:
     """Spawn `bellweather run-template --dry-run` with a minimal env (K4/K9).
 
-    Never runs the template in-process: an in-process import would hand the
-    customer script the API's DB/bucket credentials. The subprocess gets only
-    BELLWEATHER_API_URL + PATH; its last stdout line is a JSON summary
-    ({"submitted": int, "sample": [...]}).
+    Uses the installed ``bellweather`` console script (NOT ``python -m
+    bellweather.cli`` — that imports the module without a ``__main__`` guard
+    and emits nothing) and the shared ``orchestrator._child_env()`` so the
+    child can discover/import the template while never receiving the API's
+    DB/bucket credentials. Reshapes the summary into the preview contract.
     """
     proc = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "bellweather.cli",
+            "bellweather",
             "run-template",
             "--template",
             template,
@@ -195,17 +215,17 @@ def _preview_subprocess(template: str, params: dict) -> dict:
             json.dumps(params),
             "--dry-run",
         ],
-        env={
-            "BELLWEATHER_API_URL": get_settings().bellweather_api_url,
-            "PATH": os.environ.get("PATH", ""),
-        },
+        env=_child_env(),
         capture_output=True,
         text=True,
         timeout=600,
     )
     if proc.returncode != 0:
         raise HTTPException(status_code=502, detail=proc.stderr.strip() or "preview failed")
-    return json.loads(proc.stdout.strip().splitlines()[-1])
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if not lines:
+        raise HTTPException(status_code=502, detail="preview produced no output")
+    return _preview_shape(json.loads(lines[-1]))
 
 
 api_router = APIRouter(prefix="/api")

@@ -148,6 +148,57 @@ def test_preview_unknown_template_is_404():
     assert client.post("/api/templates/nope/preview", json={}).status_code == 404
 
 
+def test_preview_shape_flattens_submission_points_to_symbols_and_sample():
+    summary = {
+        "submitted": 1,
+        "sample": [
+            {
+                "payload": {
+                    "symbol_key": "echo:url",
+                    "points": [
+                        {"ts": "2026-06-01T12:00:00Z", "value": 0.5},
+                        {"ts": "2026-06-01T13:00:00Z", "value": 0.6},
+                    ],
+                }
+            },
+            {"payload": {}},  # unstructured-style: no symbol_key → ignored
+        ],
+    }
+    out = api._preview_shape(summary)
+    assert out == {
+        "submitted": 1,
+        "symbols": ["echo:url"],
+        "sample": [
+            {"symbol_key": "echo:url", "ts": "2026-06-01T12:00:00Z", "value": 0.5},
+            {"symbol_key": "echo:url", "ts": "2026-06-01T13:00:00Z", "value": 0.6},
+        ],
+    }
+
+
+def test_preview_subprocess_real_dry_run_smoke():
+    """Non-mocked: spawn the real `bellweather run-template --dry-run` against the
+    echo fixture and assert the reshaped preview contract. This is the test that
+    catches the `python -m bellweather.cli` (no __main__) and env-stripping bugs."""
+    out = api._preview_subprocess("echo", {"url": "https://example.com"})
+    assert out["submitted"] == 1
+    assert out["symbols"] == ["echo:url"]
+    assert out["sample"] == [{"symbol_key": "echo:url", "ts": "2026-06-01T12:00:00Z", "value": 0.5}]
+
+
+def test_preview_endpoint_returns_reshaped_contract():
+    """End-to-end through the route: real subprocess + reshape, unwrapped body."""
+    r = client.post("/api/templates/echo/preview", json={"url": "https://example.com"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body) == {"submitted", "symbols", "sample"}
+    assert body["symbols"] == ["echo:url"]
+    assert body["sample"][0] == {
+        "symbol_key": "echo:url",
+        "ts": "2026-06-01T12:00:00Z",
+        "value": 0.5,
+    }
+
+
 def test_orchestrator_run_triggers_tick(monkeypatch):
     monkeypatch.setattr(api, "tick", lambda conn: [101, 102])
     r = client.post("/api/orchestrator/run")
