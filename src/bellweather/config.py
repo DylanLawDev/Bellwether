@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     storage_emulator_host: str | None = None
     bellweather_api_url: str = "http://localhost:8000"
     bellweather_obs_bucket: Literal["hour", "15min"] = "hour"
+    bellweather_templates_dir: str = "producers"  # dir scanned for */template.toml
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
