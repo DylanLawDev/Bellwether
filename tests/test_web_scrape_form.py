@@ -1,4 +1,4 @@
-"""Pure validation for the Scrape-specs authoring form (web.pages._scrape_form).
+"""Pure validation for the Scrape-specs authoring form (web.forms).
 
 Locks the three guards the UI applies before calling create_scrape_spec:
 - spec names must be URL-path-safe (no '/', '?', '#', whitespace);
@@ -8,7 +8,7 @@ No Streamlit, no DB, no network.
 
 import pytest
 
-from bellweather.web.pages import _scrape_form as form
+from bellweather.web import forms as form
 
 
 # --- validate_spec_name -----------------------------------------------------

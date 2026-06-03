@@ -1,8 +1,9 @@
-"""Pure validation helpers for the Scrape-specs authoring form (6_Scrape.py).
+"""Pure validation helpers for the Scrape/Extract page forms.
 
-Kept in a non-page module (leading underscore → Streamlit does not list it as a
-page) so the logic is importable and unit-testable without importing Streamlit.
-The page wires these into `st.error(...)`; everything here is side-effect free.
+Lives OUTSIDE web/pages/ on purpose: Streamlit lists every .py file in pages/
+in the sidebar (the old leading-underscore trick did not hide it), and keeping
+the logic Streamlit-free makes it importable and unit-testable. The pages wire
+these into `st.error(...)`; everything here is side-effect free.
 """
 
 from __future__ import annotations

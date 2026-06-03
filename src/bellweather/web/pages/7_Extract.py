@@ -13,7 +13,7 @@ import json
 import streamlit as st
 
 from bellweather.web import data
-from bellweather.web.pages import _scrape_form as form
+from bellweather.web import forms as form
 
 NEW = "➕ New extractor…"
 EXAMPLE_SCHEMA = (

@@ -10,7 +10,7 @@ live). Schedule a source from the Schedules page (template "scrape").
 import streamlit as st
 
 from bellweather.web import data
-from bellweather.web.pages import _scrape_form as form
+from bellweather.web import forms as form
 
 NEW = "➕ New source…"
 
