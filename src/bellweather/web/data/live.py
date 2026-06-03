@@ -187,6 +187,10 @@ def preview_template(name, params) -> dict:
     return _request("POST", f"/api/templates/{name}/preview", json=params, timeout=_LONG_TIMEOUT)
 
 
+def get_fetch_adapter_choices() -> list[str]:
+    return _get("/api/fetch-adapters")["adapters"]
+
+
 def get_scrape_specs() -> pd.DataFrame:
     return _frame(_get("/api/scrape-specs"), contract.SCRAPE_SPEC_COLUMNS)
 

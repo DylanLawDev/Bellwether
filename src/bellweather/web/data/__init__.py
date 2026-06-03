@@ -44,6 +44,7 @@ create_scrape_spec = _b.create_scrape_spec
 update_scrape_spec = _b.update_scrape_spec
 delete_scrape_spec = _b.delete_scrape_spec
 preview_scrape_spec = _b.preview_scrape_spec
+get_fetch_adapter_choices = _b.get_fetch_adapter_choices
 
 __all__ = [
     "BACKEND",
@@ -70,4 +71,5 @@ __all__ = [
     "update_scrape_spec",
     "delete_scrape_spec",
     "preview_scrape_spec",
+    "get_fetch_adapter_choices",
 ]

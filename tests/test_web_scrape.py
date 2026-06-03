@@ -69,6 +69,9 @@ def _api(httpserver, monkeypatch):
         method="POST",
         json={"url": "https://example.com/a"},
     ).respond_with_json(_PREVIEW)
+    httpserver.expect_request("/api/fetch-adapters", method="GET").respond_with_json(
+        {"adapters": ["httpx"]}
+    )
     monkeypatch.setenv("BELLWEATHER_API_URL", httpserver.url_for("").rstrip("/"))
     get_ui_settings.cache_clear()
     yield
@@ -168,3 +171,12 @@ def test_mock_preview_scrape_spec_shape():
     assert isinstance(out["symbols"], list)
     assert isinstance(out["sample"], list)
     assert isinstance(out["tags"], list)
+
+
+# --- fetch-adapter choices (Edit-form dropdown) -----------------------------
+def test_mock_fetch_adapter_choices():
+    assert mock.get_fetch_adapter_choices() == ["httpx"]
+
+
+def test_live_fetch_adapter_choices(_api):
+    assert live.get_fetch_adapter_choices() == ["httpx"]

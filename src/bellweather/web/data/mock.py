@@ -477,6 +477,16 @@ _SCRAPE_SPECS_STATE: list[dict] = [
 _NEXT_SCRAPE_ID = {"spec": 2}
 
 
+# Registered fetch adapters offered in the Edit form's dropdown. The live
+# backend reads these from GET /api/fetch-adapters; offline we mirror the one
+# adapter the registry ships with.
+_FETCH_ADAPTERS = ["httpx"]
+
+
+def get_fetch_adapter_choices() -> list[str]:
+    return list(_FETCH_ADAPTERS)
+
+
 def _scrape_specs_frame() -> pd.DataFrame:
     rows = [{c: s[c] for c in contract.SCRAPE_SPEC_COLUMNS} for s in _SCRAPE_SPECS_STATE]
     return pd.DataFrame(rows, columns=contract.SCRAPE_SPEC_COLUMNS)

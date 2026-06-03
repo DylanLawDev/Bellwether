@@ -43,6 +43,7 @@ later without any screen changing.
                                                  # binding|fetch_adapter|llm_model|enabled
     delete_scrape_spec(name)           -> None
     preview_scrape_spec(name, url=None) -> dict  # {extracted, symbols, sample, tags}; commits nothing
+    get_fetch_adapter_choices()        -> list[str]  # registered fetch adapters (Edit dropdown)
 """
 
 # Column contracts, importable by both backends and tests so the shapes stay in sync.
