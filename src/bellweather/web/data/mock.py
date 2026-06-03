@@ -445,22 +445,69 @@ def preview_template(name, params) -> dict:
     }
 
 
-# --- scrape-spec control plane (T41) ----------------------------------------
-# One fixture spec so the Scrape page lists + previews something offline. sites/
-# output_schema/binding are nested JSON carried per-spec (not SCRAPE_SPEC_COLUMNS).
-_SCRAPE_SPECS_STATE: list[dict] = [
+# --- scrape/extract split (sources ⟷ extraction specs, M2M) ------------------
+# docs/specs/2026-06-03-scrape-extract-split-design.md. Sources own the fetch
+# half (sites + adapter → raw captures); extraction specs own the parse half
+# (schema + binding + model) and apply to sources via _LINKS_STATE. Captures
+# are derived deterministically from (source, url) — no stored capture state.
+_SOURCES_STATE: list[dict] = [
     {
         "id": 1,
         "name": "demo-prices",
-        "description": "Fixture scrape spec (offline demo).",
+        "description": "Demo product pages.",
         "sites": ["https://example.com/products/a", "https://example.com/products/b"],
+        "fetch_adapter": "httpx",
+        "enabled": True,
+    },
+    {
+        "id": 2,
+        "name": "fed-speeches",
+        "description": "FOMC speeches + testimony.",
+        "sites": [
+            "https://www.federalreserve.gov/newsevents/speeches.htm",
+            "https://www.federalreserve.gov/newsevents/testimony.htm",
+        ],
+        "fetch_adapter": "httpx",
+        "enabled": True,
+    },
+    {
+        "id": 3,
+        "name": "weather-alerts",
+        "description": "Active NWS severe-weather alerts by region.",
+        "sites": [
+            "https://www.weather.gov/alerts/west",
+            "https://www.weather.gov/alerts/central",
+            "https://www.weather.gov/alerts/east",
+        ],
+        "fetch_adapter": "httpx",
+        "enabled": True,
+    },
+    {
+        "id": 4,
+        "name": "crypto-funding",
+        "description": "Perp funding rates (disabled until rate-limit cleared).",
+        "sites": ["https://example-exchange.test/funding/btc-perp"],
+        "fetch_adapter": "httpx",
+        "enabled": False,
+    },
+    {
+        "id": 5,
+        "name": "job-postings",
+        "description": "Open-req counts on a few careers pages.",
+        "sites": ["https://example-co.test/careers", "https://another-co.test/jobs"],
+        "fetch_adapter": "httpx",
+        "enabled": True,
+    },
+]
+
+_EXTRACTION_SPECS_STATE: list[dict] = [
+    {
+        "id": 1,
+        "name": "product-prices",
+        "description": "Title + price from product pages.",
         "output_schema": {
             "type": "object",
-            "properties": {
-                "price": {"type": "number"},
-                "title": {"type": "string"},
-                "in_stock": {"type": "boolean"},
-            },
+            "properties": {"title": {"type": "string"}, "price": {"type": "number"}},
         },
         "binding": {
             "symbol_key": "scrape:prices:{title}",
@@ -468,20 +515,14 @@ _SCRAPE_SPECS_STATE: list[dict] = [
             "value": "$.price",
             "ts": "fetched_at",
             "unit": "usd",
-            "tags": ["title", "in_stock"],
+            "tags": ["title"],
         },
-        "fetch_adapter": "httpx",
         "llm_model": None,
-        "enabled": True,
     },
     {
         "id": 2,
-        "name": "fed-speeches",
-        "description": "Hawkish/dovish tone of FOMC member remarks.",
-        "sites": [
-            "https://www.federalreserve.gov/newsevents/speeches.htm",
-            "https://www.federalreserve.gov/newsevents/testimony.htm",
-        ],
+        "name": "fed-tone",
+        "description": "Hawkish/dovish tone of FOMC remarks.",
         "output_schema": {
             "type": "object",
             "properties": {
@@ -498,25 +539,15 @@ _SCRAPE_SPECS_STATE: list[dict] = [
             "unit": "score",
             "tags": ["speaker", "topic"],
         },
-        "fetch_adapter": "httpx",
         "llm_model": "claude-haiku-4-5-20251001",
-        "enabled": True,
     },
     {
         "id": 3,
-        "name": "weather-alerts",
-        "description": "Active NWS severe-weather alert counts by region.",
-        "sites": [
-            "https://www.weather.gov/alerts/west",
-            "https://www.weather.gov/alerts/central",
-            "https://www.weather.gov/alerts/east",
-        ],
+        "name": "alert-counts",
+        "description": "Active alert counts by region.",
         "output_schema": {
             "type": "object",
-            "properties": {
-                "region": {"type": "string"},
-                "active_alerts": {"type": "number"},
-            },
+            "properties": {"region": {"type": "string"}, "active_alerts": {"type": "number"}},
         },
         "binding": {
             "symbol_key": "scrape:wx-alerts:{region}",
@@ -526,21 +557,15 @@ _SCRAPE_SPECS_STATE: list[dict] = [
             "unit": "alerts",
             "tags": ["region"],
         },
-        "fetch_adapter": "httpx",
         "llm_model": None,
-        "enabled": True,
     },
     {
         "id": 4,
-        "name": "crypto-funding",
-        "description": "Perp funding rates (disabled until rate-limit cleared).",
-        "sites": ["https://example-exchange.test/funding/btc-perp"],
+        "name": "funding-rate",
+        "description": "Perp funding rate per symbol.",
         "output_schema": {
             "type": "object",
-            "properties": {
-                "symbol": {"type": "string"},
-                "funding_rate": {"type": "number"},
-            },
+            "properties": {"symbol": {"type": "string"}, "funding_rate": {"type": "number"}},
         },
         "binding": {
             "symbol_key": "scrape:funding:{symbol}",
@@ -550,24 +575,15 @@ _SCRAPE_SPECS_STATE: list[dict] = [
             "unit": "bps",
             "tags": ["symbol"],
         },
-        "fetch_adapter": "httpx",
         "llm_model": None,
-        "enabled": False,
     },
     {
         "id": 5,
-        "name": "job-postings",
-        "description": "Open-req counts on a few careers pages.",
-        "sites": [
-            "https://example-co.test/careers",
-            "https://another-co.test/jobs",
-        ],
+        "name": "job-counts",
+        "description": "Open-req counts per company.",
         "output_schema": {
             "type": "object",
-            "properties": {
-                "company": {"type": "string"},
-                "open_roles": {"type": "number"},
-            },
+            "properties": {"company": {"type": "string"}, "open_roles": {"type": "number"}},
         },
         "binding": {
             "symbol_key": "scrape:hiring:{company}",
@@ -577,13 +593,40 @@ _SCRAPE_SPECS_STATE: list[dict] = [
             "unit": "roles",
             "tags": ["company"],
         },
-        "fetch_adapter": "httpx",
         "llm_model": None,
-        "enabled": True,
+    },
+    {
+        "id": 6,
+        "name": "page-sentiment",
+        "description": "Overall page sentiment (reusable across sources).",
+        "output_schema": {
+            "type": "object",
+            "properties": {"summary": {"type": "string"}, "sentiment": {"type": "number"}},
+        },
+        "binding": {
+            "symbol_key": "scrape:sentiment:{summary}",
+            "symbol_kind": "sentiment",
+            "value": "$.sentiment",
+            "ts": "fetched_at",
+            "unit": "score",
+            "tags": ["summary"],
+        },
+        "llm_model": None,
     },
 ]
-_NEXT_SCRAPE_ID = {"spec": 6}
 
+# (source_name, extractor_name) pairs — the M2M junction. page-sentiment applies
+# to two sources so the many-to-many is visible in the fixtures.
+_LINKS_STATE: list[tuple[str, str]] = [
+    ("demo-prices", "product-prices"),
+    ("demo-prices", "page-sentiment"),
+    ("fed-speeches", "fed-tone"),
+    ("fed-speeches", "page-sentiment"),
+    ("weather-alerts", "alert-counts"),
+    ("crypto-funding", "funding-rate"),
+    ("job-postings", "job-counts"),
+]
+_NEXT_SPLIT_ID = {"source": 6, "extractor": 7}
 
 # Registered fetch adapters offered in the Edit form's dropdown. The live
 # backend reads these from GET /api/fetch-adapters; offline we mirror the one
@@ -595,84 +638,203 @@ def get_fetch_adapter_choices() -> list[str]:
     return list(_FETCH_ADAPTERS)
 
 
-def _scrape_specs_frame() -> pd.DataFrame:
-    rows = [{c: s[c] for c in contract.SCRAPE_SPEC_COLUMNS} for s in _SCRAPE_SPECS_STATE]
-    return pd.DataFrame(rows, columns=contract.SCRAPE_SPEC_COLUMNS)
+def _url_value(url: str) -> float:
+    """Stable 5.00–14.99 pseudo-value per url (sha1-seeded, test-friendly)."""
+    seed = int(hashlib.sha1(url.encode()).hexdigest()[:6], 16)
+    return round(5 + (seed % 1000) / 100.0, 2)
 
 
-def get_scrape_specs() -> pd.DataFrame:
-    return _scrape_specs_frame()
+def _url_slug(url: str) -> str:
+    return url.rstrip("/").rsplit("/", 1)[-1] or "root"
 
 
-def get_scrape_spec(name) -> dict | None:
-    for s in _SCRAPE_SPECS_STATE:
+# Per-source raw-capture templates: (content_type, format template). Captures
+# are what scraping *produces*; the Extract page parses them. Doubled braces
+# escape str.format in the JSON template.
+_CAPTURE_TEMPLATES: dict[str, tuple[str, str]] = {
+    "demo-prices": (
+        "text/html",
+        '<html><body>\n  <h1>{slug}</h1>\n  <span class="price">${value}</span>\n'
+        "  <p>In stock. Ships in 2 days.</p>\n</body></html>",
+    ),
+    "fed-speeches": (
+        "text/markdown",
+        "# Remarks: {slug}\n\n*Federal Reserve* — prepared text.\n\n"
+        "- inflation outlook\n- labor markets\n- tone reading: {value}\n",
+    ),
+    "weather-alerts": (
+        "text/html",
+        "<table>\n  <tr><th>region</th><th>active</th></tr>\n"
+        "  <tr><td>{slug}</td><td>{value}</td></tr>\n</table>",
+    ),
+    "crypto-funding": (
+        "application/json",
+        '{{"symbol": "{slug}", "funding_rate": {value}}}',
+    ),
+    "job-postings": (
+        "text/html",
+        '<ul class="openings">\n  <li>Engineer — {slug}</li>\n'
+        "  <li>Analyst — {slug}</li>\n</ul>\n<!-- open_roles: {value} -->",
+    ),
+}
+_GENERIC_CAPTURE = (
+    "text/html",
+    "<html><body>\n  <h1>{slug}</h1>\n  <p>value: {value}</p>\n</body></html>",
+)
+
+
+def _capture(source_name: str, url: str) -> dict:
+    ctype, tpl = _CAPTURE_TEMPLATES.get(source_name, _GENERIC_CAPTURE)
+    content = tpl.format(slug=_url_slug(url), value=_url_value(url))
+    return {
+        "url": url,
+        "captured_at": _now_hour().isoformat(),
+        "content_type": ctype,
+        "size_bytes": len(content),
+        "content": content,
+    }
+
+
+def get_scrape_sources() -> pd.DataFrame:
+    rows = [{c: s[c] for c in contract.SCRAPE_SOURCE_COLUMNS} for s in _SOURCES_STATE]
+    return pd.DataFrame(rows, columns=contract.SCRAPE_SOURCE_COLUMNS)
+
+
+def get_scrape_source(name) -> dict | None:
+    for s in _SOURCES_STATE:
         if s["name"] == name:
-            # deep-ish copy so callers can't mutate the fixture in place
             return {
                 **s,
                 "sites": list(s["sites"]),
-                "output_schema": dict(s["output_schema"]),
-                "binding": dict(s["binding"]),
+                "parsed_by": sorted(ex for (src, ex) in _LINKS_STATE if src == name),
             }
     return None
 
 
-def create_scrape_spec(
-    name, sites, output_schema, binding, *, description=None, fetch_adapter="httpx", llm_model=None
-) -> int:
-    sid = _NEXT_SCRAPE_ID["spec"]
-    _NEXT_SCRAPE_ID["spec"] += 1
-    _SCRAPE_SPECS_STATE.append(
+def create_scrape_source(name, sites, *, description=None, fetch_adapter="httpx") -> int:
+    sid = _NEXT_SPLIT_ID["source"]
+    _NEXT_SPLIT_ID["source"] += 1
+    _SOURCES_STATE.append(
         {
             "id": sid,
             "name": name,
             "description": description,
             "sites": list(sites),
-            "output_schema": dict(output_schema),
-            "binding": dict(binding),
             "fetch_adapter": fetch_adapter,
-            "llm_model": llm_model,
             "enabled": True,
         }
     )
     return sid
 
 
-def update_scrape_spec(name, **fields) -> None:
-    allowed = {
-        "name",
-        "description",
-        "sites",
-        "output_schema",
-        "binding",
-        "fetch_adapter",
-        "llm_model",
-        "enabled",
-    }
-    for s in _SCRAPE_SPECS_STATE:
+def update_scrape_source(name, **fields) -> None:
+    allowed = {"description", "sites", "fetch_adapter", "enabled"}
+    for s in _SOURCES_STATE:
         if s["name"] == name:
             s.update({k: v for k, v in fields.items() if k in allowed})
 
 
-def delete_scrape_spec(name) -> None:
-    _SCRAPE_SPECS_STATE[:] = [s for s in _SCRAPE_SPECS_STATE if s["name"] != name]
+def delete_scrape_source(name) -> None:
+    _SOURCES_STATE[:] = [s for s in _SOURCES_STATE if s["name"] != name]
+    _LINKS_STATE[:] = [(src, ex) for (src, ex) in _LINKS_STATE if src != name]
 
 
-def preview_scrape_spec(name, url=None) -> dict:
-    # Deterministic dry-run (commits nothing) that mirrors the live API's
-    # ScrapePreviewResult AND varies by the chosen site, so the Preview tab's
-    # per-site selector visibly does something offline. url=None falls back to
-    # the spec's first site, matching the API (_scrape_preview uses sites[0]).
-    spec = get_scrape_spec(name)
-    sites = (spec or {}).get("sites") or []
-    site = url or (sites[0] if sites else "https://example.com/")
-    seed = int(hashlib.sha1(site.encode()).hexdigest()[:6], 16)
-    value = round(5 + (seed % 1000) / 100.0, 2)  # stable 5.00–14.99 per url
-    slug = site.rstrip("/").rsplit("/", 1)[-1] or "root"
-    symbol = f"scrape:prices:{slug}"
+def get_extraction_specs() -> pd.DataFrame:
+    rows = [{c: e[c] for c in contract.EXTRACTION_SPEC_COLUMNS} for e in _EXTRACTION_SPECS_STATE]
+    return pd.DataFrame(rows, columns=contract.EXTRACTION_SPEC_COLUMNS)
+
+
+def get_extraction_spec(name) -> dict | None:
+    for e in _EXTRACTION_SPECS_STATE:
+        if e["name"] == name:
+            return {
+                **e,
+                "output_schema": dict(e["output_schema"]),
+                "binding": dict(e["binding"]),
+                "sources": sorted(src for (src, ex) in _LINKS_STATE if ex == name),
+            }
+    return None
+
+
+def create_extraction_spec(
+    name, output_schema, binding, *, description=None, llm_model=None, sources=()
+) -> int:
+    eid = _NEXT_SPLIT_ID["extractor"]
+    _NEXT_SPLIT_ID["extractor"] += 1
+    _EXTRACTION_SPECS_STATE.append(
+        {
+            "id": eid,
+            "name": name,
+            "description": description,
+            "output_schema": dict(output_schema),
+            "binding": dict(binding),
+            "llm_model": llm_model,
+        }
+    )
+    _LINKS_STATE.extend((src, name) for src in sources)
+    return eid
+
+
+def update_extraction_spec(name, **fields) -> None:
+    allowed = {"description", "output_schema", "binding", "llm_model"}
+    for e in _EXTRACTION_SPECS_STATE:
+        if e["name"] == name:
+            e.update({k: v for k, v in fields.items() if k in allowed})
+    if "sources" in fields:
+        _LINKS_STATE[:] = [(src, ex) for (src, ex) in _LINKS_STATE if ex != name]
+        _LINKS_STATE.extend((src, name) for src in fields["sources"])
+
+
+def delete_extraction_spec(name) -> None:
+    _EXTRACTION_SPECS_STATE[:] = [e for e in _EXTRACTION_SPECS_STATE if e["name"] != name]
+    _LINKS_STATE[:] = [(src, ex) for (src, ex) in _LINKS_STATE if ex != name]
+
+
+def get_captures(source_name) -> pd.DataFrame:
+    src = get_scrape_source(source_name)
+    sites = (src or {}).get("sites") or []
+    rows = [{c: _capture(source_name, u)[c] for c in contract.CAPTURE_COLUMNS} for u in sites]
+    return pd.DataFrame(rows, columns=contract.CAPTURE_COLUMNS)
+
+
+def get_capture(source_name, url) -> dict | None:
+    src = get_scrape_source(source_name)
+    if src is None or url not in src["sites"]:
+        return None
+    return _capture(source_name, url)
+
+
+def fetch_capture_now(source_name, url) -> dict:
+    # Mock "re-fetch": same deterministic content, captured_at refreshed to the
+    # current hour (identical to get_capture, so the page can swap them freely).
+    return _capture(source_name, url)
+
+
+def preview_extraction(extractor_name, source_name, url) -> dict:
+    # Deterministic dry-run of one extractor over one capture (no fetch, commits
+    # nothing): numeric schema props get the url's stable value, string props the
+    # url slug; symbols derive from the binding's symbol_key prefix so different
+    # extractors emit different symbol spaces over the same capture.
+    spec = get_extraction_spec(extractor_name) or {}
+    value, slug = _url_value(url), _url_slug(url)
+    props = spec.get("output_schema", {}).get("properties", {})
+    extracted: dict = {}
+    for key, prop in props.items():
+        if prop.get("type") == "number":
+            extracted[key] = value
+        elif prop.get("type") == "string":
+            extracted[key] = slug
+        else:
+            extracted[key] = True
+    prefix = spec.get("binding", {}).get("symbol_key", "scrape:demo:{x}").split("{")[0]
+    symbol = f"{prefix.rstrip(':')}:{slug}"
+    tags = [
+        {"tag_type": t, "raw_value": str(extracted.get(t, slug))}
+        for t in spec.get("binding", {}).get("tags", [])
+    ]
     return {
-        "extracted": {"price": value, "title": slug, "source_url": site},
+        "extracted": extracted,
         "symbols": [symbol],
         "sample": [{"symbol_key": symbol, "ts": _now_hour().isoformat(), "value": value}],
-        "tags": [{"tag_type": "title", "raw_value": slug}],
+        "tags": tags,
     }
