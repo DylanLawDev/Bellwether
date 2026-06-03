@@ -8,6 +8,7 @@ launch; query functions return filtered copies.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -472,9 +473,116 @@ _SCRAPE_SPECS_STATE: list[dict] = [
         "fetch_adapter": "httpx",
         "llm_model": None,
         "enabled": True,
-    }
+    },
+    {
+        "id": 2,
+        "name": "fed-speeches",
+        "description": "Hawkish/dovish tone of FOMC member remarks.",
+        "sites": [
+            "https://www.federalreserve.gov/newsevents/speeches.htm",
+            "https://www.federalreserve.gov/newsevents/testimony.htm",
+        ],
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "speaker": {"type": "string"},
+                "tone": {"type": "number"},
+                "topic": {"type": "string"},
+            },
+        },
+        "binding": {
+            "symbol_key": "scrape:fed-tone:{speaker}",
+            "symbol_kind": "sentiment",
+            "value": "$.tone",
+            "ts": "fetched_at",
+            "unit": "score",
+            "tags": ["speaker", "topic"],
+        },
+        "fetch_adapter": "httpx",
+        "llm_model": "claude-haiku-4-5-20251001",
+        "enabled": True,
+    },
+    {
+        "id": 3,
+        "name": "weather-alerts",
+        "description": "Active NWS severe-weather alert counts by region.",
+        "sites": [
+            "https://www.weather.gov/alerts/west",
+            "https://www.weather.gov/alerts/central",
+            "https://www.weather.gov/alerts/east",
+        ],
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "region": {"type": "string"},
+                "active_alerts": {"type": "number"},
+            },
+        },
+        "binding": {
+            "symbol_key": "scrape:wx-alerts:{region}",
+            "symbol_kind": "count",
+            "value": "$.active_alerts",
+            "ts": "fetched_at",
+            "unit": "alerts",
+            "tags": ["region"],
+        },
+        "fetch_adapter": "httpx",
+        "llm_model": None,
+        "enabled": True,
+    },
+    {
+        "id": 4,
+        "name": "crypto-funding",
+        "description": "Perp funding rates (disabled until rate-limit cleared).",
+        "sites": ["https://example-exchange.test/funding/btc-perp"],
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "funding_rate": {"type": "number"},
+            },
+        },
+        "binding": {
+            "symbol_key": "scrape:funding:{symbol}",
+            "symbol_kind": "rate",
+            "value": "$.funding_rate",
+            "ts": "fetched_at",
+            "unit": "bps",
+            "tags": ["symbol"],
+        },
+        "fetch_adapter": "httpx",
+        "llm_model": None,
+        "enabled": False,
+    },
+    {
+        "id": 5,
+        "name": "job-postings",
+        "description": "Open-req counts on a few careers pages.",
+        "sites": [
+            "https://example-co.test/careers",
+            "https://another-co.test/jobs",
+        ],
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "company": {"type": "string"},
+                "open_roles": {"type": "number"},
+            },
+        },
+        "binding": {
+            "symbol_key": "scrape:hiring:{company}",
+            "symbol_kind": "count",
+            "value": "$.open_roles",
+            "ts": "fetched_at",
+            "unit": "roles",
+            "tags": ["company"],
+        },
+        "fetch_adapter": "httpx",
+        "llm_model": None,
+        "enabled": True,
+    },
 ]
-_NEXT_SCRAPE_ID = {"spec": 2}
+_NEXT_SCRAPE_ID = {"spec": 6}
 
 
 # Registered fetch adapters offered in the Edit form's dropdown. The live
@@ -551,17 +659,20 @@ def delete_scrape_spec(name) -> None:
 
 
 def preview_scrape_spec(name, url=None) -> dict:
-    # Deterministic dry-run shape (commits nothing). Mirrors the live API's
-    # ScrapePreviewResult: extracted JSON + would-be symbols/sample/tags.
+    # Deterministic dry-run (commits nothing) that mirrors the live API's
+    # ScrapePreviewResult AND varies by the chosen site, so the Preview tab's
+    # per-site selector visibly does something offline. url=None falls back to
+    # the spec's first site, matching the API (_scrape_preview uses sites[0]).
+    spec = get_scrape_spec(name)
+    sites = (spec or {}).get("sites") or []
+    site = url or (sites[0] if sites else "https://example.com/")
+    seed = int(hashlib.sha1(site.encode()).hexdigest()[:6], 16)
+    value = round(5 + (seed % 1000) / 100.0, 2)  # stable 5.00–14.99 per url
+    slug = site.rstrip("/").rsplit("/", 1)[-1] or "root"
+    symbol = f"scrape:prices:{slug}"
     return {
-        "extracted": {"price": 9.99, "title": "demo"},
-        "symbols": [f"scrape:prices:demo ({name})"],
-        "sample": [
-            {
-                "symbol_key": f"scrape:prices:demo ({name})",
-                "ts": _now_hour().isoformat(),
-                "value": 9.99,
-            }
-        ],
-        "tags": [{"tag_type": "title", "raw_value": "demo"}],
+        "extracted": {"price": value, "title": slug, "source_url": site},
+        "symbols": [symbol],
+        "sample": [{"symbol_key": symbol, "ts": _now_hour().isoformat(), "value": value}],
+        "tags": [{"tag_type": "title", "raw_value": slug}],
     }

@@ -173,6 +173,27 @@ def test_mock_preview_scrape_spec_shape():
     assert isinstance(out["tags"], list)
 
 
+def test_mock_preview_varies_by_url():
+    name = mock.get_scrape_specs().iloc[0]["name"]
+    a = mock.preview_scrape_spec(name, url="https://example.com/products/a")
+    b = mock.preview_scrape_spec(name, url="https://example.com/products/b")
+    assert a["symbols"] != b["symbols"]
+    assert a["sample"][0]["value"] != b["sample"][0]["value"]
+    # deterministic: same url → same result
+    assert mock.preview_scrape_spec(name, url="https://example.com/products/a") == a
+
+
+def test_mock_preview_url_none_uses_first_site():
+    name = mock.get_scrape_specs().iloc[0]["name"]
+    first_site = mock.get_scrape_spec(name)["sites"][0]
+    assert mock.preview_scrape_spec(name) == mock.preview_scrape_spec(name, url=first_site)
+
+
+def test_mock_has_several_fixture_specs():
+    # comprehensive offline data: the selector should have plenty to browse
+    assert len(mock.get_scrape_specs()) >= 4
+
+
 # --- fetch-adapter choices (Edit-form dropdown) -----------------------------
 def test_mock_fetch_adapter_choices():
     assert mock.get_fetch_adapter_choices() == ["httpx"]
