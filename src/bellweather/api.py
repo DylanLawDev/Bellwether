@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError
 
 from bellweather import reads, schedules, templates
 import bellweather.fetch.httpx_fetch  # noqa: F401  # registers the default "httpx" adapter
-from bellweather.fetch import get_fetcher
+from bellweather.fetch import get_fetcher, known_fetchers
 from bellweather.llm import LlmExtractor
 from bellweather.scrape import specs as scrape_specs
 from bellweather.scrape.binding import apply_binding
@@ -408,6 +408,11 @@ def api_ingestion_rate(hours: int = 48):
 @api_router.get("/config", response_model=list[ConfigRow])
 def api_config():
     return reads.get_config()
+
+
+@api_router.get("/fetch-adapters")
+def api_fetch_adapters():
+    return {"adapters": sorted(known_fetchers())}
 
 
 @api_router.get("/templates", response_model=list[TemplateRow])
