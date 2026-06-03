@@ -26,6 +26,14 @@ EXAMPLE_BINDING = (
 )
 
 st.title("Extraction specs")
+if data.BACKEND == "live":
+    # The T43+ backend tickets land /api/extraction-specs (spec §7/§8); until then
+    # live mode would 404 on first load — stop with a clear notice instead.
+    st.warning(
+        "Extraction specs aren't live yet — the backend (`/api/extraction-specs`, T43+) "
+        "hasn't landed. Run the UI with `BELLWEATHER_UI_SOURCE=mock` to explore this page."
+    )
+    st.stop()
 st.caption(
     "How to parse captures: output schema + binding + model. Fetching lives on the **Scrape** page."
 )

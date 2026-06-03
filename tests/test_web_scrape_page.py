@@ -51,6 +51,18 @@ def test_scrape_blank_sites_create_surfaces_validation_error():
     assert any("site URL is required" in e.value for e in at.error)
 
 
+def test_scrape_page_gated_in_live_mode(monkeypatch):
+    # Until the T43+ backend lands /api/scrape-sources, live mode must show a
+    # clear notice and stop instead of dying on a 404 from the missing endpoint.
+    from bellweather.web import data
+
+    monkeypatch.setattr(data, "BACKEND", "live")
+    at = AppTest.from_file(_SCRAPE).run(timeout=20)
+    assert not at.exception
+    assert any("T43" in w.value for w in at.warning)
+    assert not at.selectbox  # stopped before rendering the source picker
+
+
 # --- Extract page (extraction specs) -------------------------------------------
 def test_extract_new_extractor_view_renders_with_fixtures():
     at = AppTest.from_file(_EXTRACT).run(timeout=20)
@@ -90,3 +102,14 @@ def test_extract_invalid_binding_surfaces_validation_error():
     at.button[0].click().run(timeout=20)
     assert not at.exception
     assert any("Binding" in e.value for e in at.error)
+
+
+def test_extract_page_gated_in_live_mode(monkeypatch):
+    # Same gate as the Scrape page: /api/extraction-specs doesn't exist yet.
+    from bellweather.web import data
+
+    monkeypatch.setattr(data, "BACKEND", "live")
+    at = AppTest.from_file(_EXTRACT).run(timeout=20)
+    assert not at.exception
+    assert any("T43" in w.value for w in at.warning)
+    assert not at.selectbox  # stopped before rendering the extractor picker

@@ -4,7 +4,9 @@ Select a source (or "➕ New source…"), edit what to fetch (sites + adapter), 
 inspect the raw captures scraping produces. Parsing lives on the Extract page —
 extraction specs attach to sources there (many-to-many); this page only shows
 the links read-only. Reads/writes only through bellweather.web.data (mock or
-live). Schedule a source from the Schedules page (template "scrape").
+live). Scheduling sources via the "scrape" template arrives with the T43+
+backend (T45 renames its param spec → source); today's template still resolves
+legacy scrape_specs rows, so source names can't be scheduled yet.
 """
 
 import streamlit as st
@@ -15,6 +17,14 @@ from bellweather.web import forms as form
 NEW = "➕ New source…"
 
 st.title("Scrape sources")
+if data.BACKEND == "live":
+    # The T43+ backend tickets land /api/scrape-sources (spec §7/§8); until then
+    # live mode would 404 on first load — stop with a clear notice instead.
+    st.warning(
+        "Scrape sources aren't live yet — the backend (`/api/scrape-sources`, T43+) "
+        "hasn't landed. Run the UI with `BELLWEATHER_UI_SOURCE=mock` to explore this page."
+    )
+    st.stop()
 st.caption(
     "What to fetch: sites + adapter. Raw captures are the product — "
     "parsing lives on the **Extract** page."
@@ -28,7 +38,10 @@ src = None if is_new else data.get_scrape_source(choice)
 # The selected source's name, used by the Captures/Delete controls below.
 selected_name = "" if is_new else src["name"]
 
-st.caption('→ Schedule on the **Schedules** page (template "scrape", source = name).')
+st.caption(
+    '→ Scheduling sources lands with the T43+ backend (the "scrape" template still '
+    "takes legacy spec names, not sources)."
+)
 
 edit_tab, captures_tab = st.tabs(["Edit", "Captures"])
 
