@@ -53,59 +53,94 @@ def test_parse_json_passes_through_valid():
     assert value == {"a": 1}
 
 
-# --- build_spec_payload (unified create/edit assembly) ----------------------
+# --- build_source_payload (Scrape page: fetch half) --------------------------
+def _src_kw(**over):
+    base = dict(
+        name="my-source",
+        description="",
+        sites_raw="https://a\n  \nhttps://b\n",
+        fetch_adapter="httpx",
+    )
+    base.update(over)
+    return base
+
+
+def test_source_payload_happy_path():
+    payload, errors = form.build_source_payload(**_src_kw())
+    assert errors == []
+    assert payload["name"] == "my-source"
+    assert payload["sites"] == ["https://a", "https://b"]  # blanks stripped
+    assert payload["description"] is None  # blank → None
+    assert payload["fetch_adapter"] == "httpx"
+
+
+def test_source_payload_edit_path_skips_name_check():
+    # require_name=False: an empty name is fine because the selector owns it
+    _, errors = form.build_source_payload(**_src_kw(name="", require_name=False))
+    assert errors == []
+
+
+def test_source_payload_requires_name_on_create():
+    _, errors = form.build_source_payload(**_src_kw(name="bad/name"))
+    assert any("name" in e.lower() for e in errors)
+
+
+def test_source_payload_requires_sites():
+    _, errors = form.build_source_payload(**_src_kw(sites_raw="   \n  "))
+    assert any("site" in e.lower() for e in errors)
+
+
+def test_source_payload_blank_adapter_defaults_httpx():
+    payload, errors = form.build_source_payload(**_src_kw(fetch_adapter=""))
+    assert errors == []
+    assert payload["fetch_adapter"] == "httpx"
+
+
+# --- build_extraction_payload (Extract page: parse half) ----------------------
 _OK_SCHEMA = '{"type": "object", "properties": {"price": {"type": "number"}}}'
 _OK_BINDING = '{"symbol_key": "s:{x}", "symbol_kind": "k", "value": "$.price", "ts": "fetched_at"}'
 
 
-def _kw(**over):
+def _ex_kw(**over):
     base = dict(
-        name="my-spec",
+        name="my-extractor",
         description="",
-        sites_raw="https://a\n  \nhttps://b\n",
         output_schema_raw=_OK_SCHEMA,
         binding_raw=_OK_BINDING,
-        fetch_adapter="httpx",
         llm_model="",
     )
     base.update(over)
     return base
 
 
-def test_build_payload_happy_path():
-    payload, errors = form.build_spec_payload(**_kw())
+def test_extraction_payload_happy_path():
+    payload, errors = form.build_extraction_payload(**_ex_kw())
     assert errors == []
-    assert payload["name"] == "my-spec"
-    assert payload["sites"] == ["https://a", "https://b"]  # blanks stripped
-    assert payload["description"] is None  # blank → None
-    assert payload["llm_model"] is None
+    assert payload["name"] == "my-extractor"
+    assert payload["llm_model"] is None  # blank → None
+    assert payload["description"] is None
     assert payload["output_schema"] == {
         "type": "object",
         "properties": {"price": {"type": "number"}},
     }
+    assert payload["binding"]["symbol_key"] == "s:{x}"
 
 
-def test_build_payload_edit_path_skips_name_check():
-    # require_name=False: an empty name is fine because the selector owns it
-    payload, errors = form.build_spec_payload(**_kw(name="", require_name=False))
+def test_extraction_payload_edit_path_skips_name_check():
+    _, errors = form.build_extraction_payload(**_ex_kw(name="", require_name=False))
     assert errors == []
 
 
-def test_build_payload_requires_name_on_create():
-    _, errors = form.build_spec_payload(**_kw(name="bad/name"))
-    assert any("Spec name" in e for e in errors)
+def test_extraction_payload_requires_name_on_create():
+    _, errors = form.build_extraction_payload(**_ex_kw(name="bad/name"))
+    assert any("name" in e.lower() for e in errors)
 
 
-def test_build_payload_requires_sites():
-    _, errors = form.build_spec_payload(**_kw(sites_raw="   \n  "))
-    assert any("site" in e.lower() for e in errors)
-
-
-def test_build_payload_rejects_non_object_schema():
-    _, errors = form.build_spec_payload(**_kw(output_schema_raw="[1, 2]"))
+def test_extraction_payload_rejects_non_object_schema():
+    _, errors = form.build_extraction_payload(**_ex_kw(output_schema_raw="[1, 2]"))
     assert any("Output schema" in e for e in errors)
 
 
-def test_build_payload_rejects_invalid_json_binding():
-    _, errors = form.build_spec_payload(**_kw(binding_raw="{nope}"))
+def test_extraction_payload_rejects_invalid_json_binding():
+    _, errors = form.build_extraction_payload(**_ex_kw(binding_raw="{nope}"))
     assert any("Binding" in e for e in errors)
