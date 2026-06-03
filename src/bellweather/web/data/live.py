@@ -191,41 +191,92 @@ def get_fetch_adapter_choices() -> list[str]:
     return _get("/api/fetch-adapters")["adapters"]
 
 
-def get_scrape_specs() -> pd.DataFrame:
-    return _frame(_get("/api/scrape-specs"), contract.SCRAPE_SPEC_COLUMNS)
+# --- scrape/extract split ----------------------------------------------------
+# These call the PLANNED control-plane endpoints from
+# docs/specs/2026-06-03-scrape-extract-split-design.md §7. The T43+ backend
+# tickets implement them; until then the scrape pages are mock-only and the
+# pytest-httpserver tests in tests/test_web_scrape.py are the executable
+# contract the API must satisfy.
+def get_scrape_sources() -> pd.DataFrame:
+    return _frame(_get("/api/scrape-sources"), contract.SCRAPE_SOURCE_COLUMNS)
 
 
-def get_scrape_spec(name) -> dict:
-    return _get(f"/api/scrape-specs/{name}")
+def get_scrape_source(name) -> dict:
+    return _get(f"/api/scrape-sources/{name}")
 
 
-def create_scrape_spec(
-    name, sites, output_schema, binding, *, description=None, fetch_adapter="httpx", llm_model=None
-) -> int:
+def create_scrape_source(name, sites, *, description=None, fetch_adapter="httpx") -> int:
     body = {
         "name": name,
         "sites": sites,
+        "description": description,
+        "fetch_adapter": fetch_adapter,
+    }
+    return _request("POST", "/api/scrape-sources", json=body)["id"]
+
+
+def update_scrape_source(name, **fields) -> None:
+    _request("PATCH", f"/api/scrape-sources/{name}", json=fields)
+
+
+def delete_scrape_source(name) -> None:
+    _request("DELETE", f"/api/scrape-sources/{name}")
+
+
+def get_extraction_specs() -> pd.DataFrame:
+    return _frame(_get("/api/extraction-specs"), contract.EXTRACTION_SPEC_COLUMNS)
+
+
+def get_extraction_spec(name) -> dict:
+    return _get(f"/api/extraction-specs/{name}")
+
+
+def create_extraction_spec(
+    name, output_schema, binding, *, description=None, llm_model=None, sources=()
+) -> int:
+    body = {
+        "name": name,
         "output_schema": output_schema,
         "binding": binding,
         "description": description,
-        "fetch_adapter": fetch_adapter,
         "llm_model": llm_model,
+        "sources": list(sources),
     }
-    return _request("POST", "/api/scrape-specs", json=body)["id"]
+    return _request("POST", "/api/extraction-specs", json=body)["id"]
 
 
-def update_scrape_spec(name, **fields) -> None:
-    _request("PATCH", f"/api/scrape-specs/{name}", json=fields)
+def update_extraction_spec(name, **fields) -> None:
+    # A "sources" list in fields replaces the M2M links server-side.
+    _request("PATCH", f"/api/extraction-specs/{name}", json=fields)
 
 
-def delete_scrape_spec(name) -> None:
-    _request("DELETE", f"/api/scrape-specs/{name}")
+def delete_extraction_spec(name) -> None:
+    _request("DELETE", f"/api/extraction-specs/{name}")
 
 
-def preview_scrape_spec(name, url=None) -> dict:
-    # Trusted in-process dry-run (K10): the API fetches one URL + LLM-extracts +
-    # binds, committing nothing. Holds the LLM key, so it can take orchestrator's
-    # long timeout. Returns {extracted, symbols, sample, tags}.
+def get_captures(source_name) -> pd.DataFrame:
+    return _frame(_get(f"/api/scrape-sources/{source_name}/captures"), contract.CAPTURE_COLUMNS)
+
+
+def get_capture(source_name, url) -> dict:
+    return _get(f"/api/scrape-sources/{source_name}/capture", url=url)
+
+
+def fetch_capture_now(source_name, url) -> dict:
+    # Server-side fetch of one site (fresh raw capture). Long timeout: the
+    # adapter may be slow against real pages.
     return _request(
-        "POST", f"/api/scrape-specs/{name}/preview", json={"url": url}, timeout=_LONG_TIMEOUT
+        "POST", f"/api/scrape-sources/{source_name}/fetch", json={"url": url}, timeout=_LONG_TIMEOUT
+    )
+
+
+def preview_extraction(extractor_name, source_name, url) -> dict:
+    # Trusted in-process dry-run over the STORED capture (no fetch): the API
+    # LLM-extracts + binds, committing nothing. Long timeout for the LLM call.
+    # Returns {extracted, symbols, sample, tags}.
+    return _request(
+        "POST",
+        f"/api/extraction-specs/{extractor_name}/preview",
+        json={"source": source_name, "url": url},
+        timeout=_LONG_TIMEOUT,
     )
