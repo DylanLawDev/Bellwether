@@ -34,15 +34,29 @@ later without any screen changing.
     force_schedule(id)                 -> None   # one-shot force_run flag
     run_orchestrator_now()             -> dict[started_run_ids]
     preview_template(name, params)     -> dict[symbols, sample]   # dry-run, commits nothing
-    get_scrape_specs()                 -> DataFrame[id, name, description,
-                                                    fetch_adapter, llm_model, enabled]
-    get_scrape_spec(name)              -> dict   # full spec incl sites/output_schema/binding
-    create_scrape_spec(name, sites, output_schema, binding, *, description=None,
-                       fetch_adapter="httpx", llm_model=None) -> int
-    update_scrape_spec(name, **fields) -> None   # name|description|sites|output_schema|
-                                                 # binding|fetch_adapter|llm_model|enabled
-    delete_scrape_spec(name)           -> None
-    preview_scrape_spec(name, url=None) -> dict  # {extracted, symbols, sample, tags}; commits nothing
+    get_scrape_sources()               -> DataFrame[id, name, description,
+                                                    fetch_adapter, enabled]
+    get_scrape_source(name)            -> dict | None  # + sites: list, parsed_by: list[str]
+    create_scrape_source(name, sites, *, description=None,
+                         fetch_adapter="httpx") -> int
+    update_scrape_source(name, **fields) -> None  # description|sites|fetch_adapter|enabled
+    delete_scrape_source(name)         -> None    # also drops its extractor links
+    get_extraction_specs()             -> DataFrame[id, name, description, llm_model]
+    get_extraction_spec(name)          -> dict | None  # + output_schema, binding,
+                                                       #   sources: list[str] (M2M edit side)
+    create_extraction_spec(name, output_schema, binding, *, description=None,
+                           llm_model=None, sources=()) -> int
+    update_extraction_spec(name, **fields) -> None  # description|output_schema|binding|
+                                                    # llm_model|sources (replaces links)
+    delete_extraction_spec(name)       -> None      # also drops its links
+    get_captures(source_name)          -> DataFrame[url, captured_at, content_type,
+                                                    size_bytes]   # latest per site
+    get_capture(source_name, url)      -> dict | None  # CAPTURE_COLUMNS + content: str
+    fetch_capture_now(source_name, url) -> dict        # re-fetch one site, fresh capture
+    preview_extraction(extractor_name, source_name, url)
+                                       -> dict  # {extracted, symbols, sample, tags};
+                                                #   parses the stored capture, NO fetch
+    get_fetch_adapter_choices()        -> list[str]  # registered fetch adapters (Edit dropdown)
 """
 
 # Column contracts, importable by both backends and tests so the shapes stay in sync.
@@ -103,13 +117,28 @@ RUN_COLUMNS = [
     "error",
 ]
 
-# Scrape-spec control plane (T41). `sites`/`output_schema`/`binding` are nested JSON
-# carried per-spec (like `params` on a schedule), not flat columns here.
-SCRAPE_SPEC_COLUMNS = [
+# Scrape/extract split (docs/specs/2026-06-03-scrape-extract-split-design.md).
+# Sources own the fetch half; extraction specs own the parse half; they relate
+# many-to-many. `sites`/`output_schema`/`binding`/links are nested JSON carried
+# per-entity (like `params` on a schedule), not flat columns here.
+SCRAPE_SOURCE_COLUMNS = [
     "id",
     "name",
     "description",
     "fetch_adapter",
-    "llm_model",
     "enabled",
+]
+EXTRACTION_SPEC_COLUMNS = [
+    "id",
+    "name",
+    "description",
+    "llm_model",
+]
+# A capture is the latest raw bronze for one (source, url); `content` (str) is
+# carried only on the single-capture dict, not in the listing frame.
+CAPTURE_COLUMNS = [
+    "url",
+    "captured_at",
+    "content_type",
+    "size_bytes",
 ]

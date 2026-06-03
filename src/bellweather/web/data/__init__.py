@@ -38,12 +38,21 @@ delete_schedule = _b.delete_schedule
 force_schedule = _b.force_schedule
 run_orchestrator_now = _b.run_orchestrator_now
 preview_template = _b.preview_template
-get_scrape_specs = _b.get_scrape_specs
-get_scrape_spec = _b.get_scrape_spec
-create_scrape_spec = _b.create_scrape_spec
-update_scrape_spec = _b.update_scrape_spec
-delete_scrape_spec = _b.delete_scrape_spec
-preview_scrape_spec = _b.preview_scrape_spec
+get_scrape_sources = _b.get_scrape_sources
+get_scrape_source = _b.get_scrape_source
+create_scrape_source = _b.create_scrape_source
+update_scrape_source = _b.update_scrape_source
+delete_scrape_source = _b.delete_scrape_source
+get_extraction_specs = _b.get_extraction_specs
+get_extraction_spec = _b.get_extraction_spec
+create_extraction_spec = _b.create_extraction_spec
+update_extraction_spec = _b.update_extraction_spec
+delete_extraction_spec = _b.delete_extraction_spec
+get_captures = _b.get_captures
+get_capture = _b.get_capture
+fetch_capture_now = _b.fetch_capture_now
+preview_extraction = _b.preview_extraction
+get_fetch_adapter_choices = _b.get_fetch_adapter_choices
 
 __all__ = [
     "BACKEND",
@@ -64,10 +73,19 @@ __all__ = [
     "force_schedule",
     "run_orchestrator_now",
     "preview_template",
-    "get_scrape_specs",
-    "get_scrape_spec",
-    "create_scrape_spec",
-    "update_scrape_spec",
-    "delete_scrape_spec",
-    "preview_scrape_spec",
+    "get_scrape_sources",
+    "get_scrape_source",
+    "create_scrape_source",
+    "update_scrape_source",
+    "delete_scrape_source",
+    "get_extraction_specs",
+    "get_extraction_spec",
+    "create_extraction_spec",
+    "update_extraction_spec",
+    "delete_extraction_spec",
+    "get_captures",
+    "get_capture",
+    "fetch_capture_now",
+    "preview_extraction",
+    "get_fetch_adapter_choices",
 ]
