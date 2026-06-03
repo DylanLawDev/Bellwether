@@ -43,3 +43,62 @@ def validate_json_object(label: str, value: object) -> str | None:
     if not isinstance(value, dict):
         return f"{label} must be a JSON object (e.g. {{...}}), not {type(value).__name__}."
     return None
+
+
+def build_spec_payload(
+    *,
+    name: str,
+    description: str,
+    sites_raw: str,
+    output_schema_raw: str,
+    binding_raw: str,
+    fetch_adapter: str,
+    llm_model: str,
+    require_name: bool = True,
+) -> tuple[dict | None, list[str]]:
+    """Parse + validate the unified create/edit form; return (payload, errors).
+
+    Pure and Streamlit-free so the page's new-vs-existing branch stays testable.
+    ``require_name=False`` on the edit path, where the name comes from the
+    selector and is immutable. Blank ``description``/``llm_model`` collapse to
+    ``None``; blank ``fetch_adapter`` defaults to ``"httpx"``.
+    """
+    errors: list[str] = []
+    sites = [line.strip() for line in sites_raw.splitlines() if line.strip()]
+
+    output_schema, err_schema = parse_json("Output schema", output_schema_raw)
+    if err_schema:
+        errors.append(err_schema)
+    else:
+        err = validate_json_object("Output schema", output_schema)
+        if err:
+            errors.append(err)
+
+    binding, err_binding = parse_json("Binding", binding_raw)
+    if err_binding:
+        errors.append(err_binding)
+    else:
+        err = validate_json_object("Binding", binding)
+        if err:
+            errors.append(err)
+
+    if require_name:
+        err = validate_spec_name(name)
+        if err:
+            errors.append(err)
+
+    if not sites:
+        errors.append("At least one site URL is required.")
+
+    if errors:
+        return None, errors
+
+    return {
+        "name": name.strip(),
+        "description": description.strip() or None,
+        "sites": sites,
+        "output_schema": output_schema,
+        "binding": binding,
+        "fetch_adapter": fetch_adapter or "httpx",
+        "llm_model": llm_model.strip() or None,
+    }, []
