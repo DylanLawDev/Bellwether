@@ -2,6 +2,16 @@ name: deploy
 on:
   push:
     branches: [main]
+    # Docs/specs/tickets and Terraform don't affect the built image (CI never runs
+    # Terraform — infra applies are manual), so don't burn a build+deploy on them.
+    # A push mixing code + docs still deploys. workflow_dispatch is the escape
+    # hatch for a manual deploy (e.g. after a terraform apply recreates a Job
+    # pinned to the bootstrap image).
+    paths-ignore:
+      - "docs/**"
+      - "infra/**"
+      - "**.md"
+  workflow_dispatch:
 permissions:
   contents: read
   id-token: write
