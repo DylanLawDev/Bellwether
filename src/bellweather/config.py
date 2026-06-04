@@ -11,7 +11,12 @@ class Settings(BaseSettings):
     bellweather_obs_bucket: Literal["hour", "15min"] = "hour"
     bellweather_templates_dir: str = "producers"  # dir scanned for */template.toml
     anthropic_api_key: str | None = None
-    scrape_llm_model: str = "claude-haiku-4-5-20251001"  # cheap default; per-spec override wins
+    scrape_llm_model: str = (
+        "claude-haiku-4-5-20251001"  # cheap Anthropic-side default; per-spec override wins
+    )
+    llm_provider: str = "gemini"  # "gemini" | "anthropic" — default provider
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"  # free-tier default; per-spec override wins
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

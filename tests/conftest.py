@@ -71,3 +71,7 @@ requires_gcs = pytest.mark.skipif(not _gcs_reachable(), reason="GCS emulator not
 requires_llm = pytest.mark.skipif(
     not os.environ.get("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
 )
+
+requires_gemini = pytest.mark.skipif(
+    not os.environ.get("GEMINI_API_KEY"), reason="GEMINI_API_KEY not set"
+)
