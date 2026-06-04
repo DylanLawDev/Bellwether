@@ -10,7 +10,7 @@ One `terraform apply` stands up the whole GCP baseline:
 - the **orchestrator** as a Cloud Run Job (`bellweather orchestrate --once`),
 - a **Cloud Scheduler** trigger that runs the worker job every minute to drain the queue,
 - a **Cloud Scheduler** trigger that runs the orchestrator job every minute to fire due schedules,
-- a runtime **service account** + IAM, and **Secret Manager** secrets holding `DATABASE_URL` and `ANTHROPIC_API_KEY`.
+- a runtime **service account** + IAM, and **Secret Manager** secrets holding `DATABASE_URL`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY`.
 
 ## The combined Cloud Run service (T17)
 
@@ -76,55 +76,48 @@ tick (D3) instead of waiting for the minute scheduler.
 **Cost:** one more tiny scheduled Job — it scales to zero between ticks, so it adds no
 always-on cost. Cloud SQL still dominates; the project stays in the `<$40/mo` envelope.
 
-## The LLM scrape engine secret (T42)
+## LLM key secrets (T42 / T44)
 
-The schema-driven scrape engine (`docs/specs/2026-06-01-llm-scrape-engine-design.md`) calls
-Anthropic's API — the **first paid runtime dependency** (D-b). The key is wired like
-`DATABASE_URL`: a `bellweather-anthropic-api-key` Secret Manager secret (`+ version`, fed from
-`var.anthropic_api_key`), a `secretmanager.secretAccessor` grant, and an `ANTHROPIC_API_KEY`
-env var sourced from that secret via `value_source.secret_key_ref`. **Unlike `DATABASE_URL`,
-the `secretAccessor` grant is scoped to the runtime SA *only*** — the orchestrator runs as a
-separate SA (see below) that is deliberately *not* granted this secret.
+The schema-driven scrape engine calls LLM providers — currently Anthropic (`scrape-llm-v1`,
+T42) and Gemini (`scrape-gemini-v1`, T43/T44). Each provider's key follows the same posture:
+a dedicated Secret Manager secret, fed from an optional tfvar, with a `secretAccessor` grant
+scoped to the **runtime SA only**, and an env mount on the **worker Job only**.
 
-It is mounted on **exactly one surface** (K1/K9):
+| secret | tfvar | env var | surface |
+| ------ | ----- | ------- | ------- |
+| `bellweather-anthropic-api-key` | `var.anthropic_api_key` | `ANTHROPIC_API_KEY` | worker Job only |
+| `bellweather-gemini-api-key` | `var.gemini_api_key` | `GEMINI_API_KEY` | worker Job only |
 
-| surface | why it needs the key |
-| ------- | -------------------- |
-| `bellweather-worker` Job | runs `LlmScrapeExtractor` (`scrape-llm-v1`) — the real extraction |
+**The tfvar is the source of truth.** Both keys follow a **conditional baseline**: the
+`google_secret_manager_secret_version` and the worker Job's env mount are created only when
+the corresponding tfvar is non-empty (`count = var.<key> == "" ? 0 : 1`). To enable a key
+later, set the var in `terraform.tfvars` and re-apply — that single `terraform apply` creates
+the secret version *and* the env mount atomically. **Never hand-add a secret version with
+`gcloud`**: doing so creates the payload but leaves the worker Job's env mount absent, so the
+key is present in Secret Manager but the worker never sees it.
 
-The worker runs as the **runtime SA**, the only identity granted `secretAccessor` on the
-Anthropic secret.
+The secret object itself (not the version) is always created — an empty var means no version,
+not no secret. This lets the IAM grant (`secretAccessor` to the runtime SA) be in place before
+any key material exists, and means `terraform apply` with all-empty vars never hits the
+"empty-payload secret version" error that broke the 2026-06-03 baseline apply.
 
-**The public `bellweather-api` service does NOT carry the key** (PR #48, comment
-3344829117). The service runs as the runtime SA, but the `ANTHROPIC_API_KEY` env var is
-deliberately omitted, and the API reads the key only from its injected env (never via
-ADC/Secret Manager at runtime — see `src/bellweather/llm.py`), so the omission alone fully
-gates the API's access. The motive is a credit-drain vector: the in-process dry-run preview
-(`POST /api/scrape-specs/{name}/preview`, K10/T39) is an **unauthenticated, public** endpoint,
-so without the env var an attacker could otherwise burn Anthropic credits at will. The
-maintainer accepted the tradeoff that **the preview route is therefore disabled in prod**:
-`config.anthropic_api_key` is `Optional`, so the service still boots, and `LlmExtractor` raises
-a clear `RuntimeError` (a graceful preview error, not a deploy failure) when the route is hit.
-Re-enabling preview on the public API is deferred to a follow-up ticket that puts an
-auth/rate-limit boundary in front of it.
+**The public `bellweather-api` service does NOT carry either LLM key** (PR #48, comment
+3344829117). The service runs as the runtime SA, but the env vars are deliberately omitted.
+Both `config.anthropic_api_key` and `config.gemini_api_key` are `Optional`, so the service
+still boots; the extractor raises a clear `RuntimeError` when the relevant route is hit.
+This closes a credit-drain vector: an unauthenticated attacker could otherwise hammer the
+in-process preview route (K10/T39) and burn LLM credits at will. Re-enabling preview is
+deferred to a follow-up ticket that adds auth/rate-limit.
 
-The **orchestrator Job and the scrape collector it spawns do NOT get the key** (K1/K4/D-e). This
-is enforced at the **IAM level, not just by omitting the env var**: the orchestrator runs as a
-dedicated `bellweather-orchestrator` SA that holds `DATABASE_URL` but is never granted the
-Anthropic secret. Env-var omission alone would be insufficient — on Cloud Run, ADC is ambient
-(reachable via the metadata server regardless of the minimal child env), so a spawned template
-could otherwise read the secret directly from Secret Manager. The collector runs unprivileged,
-reads its spec via the API, and only fetches each site (httpx, no secret) and `POST /ingest`s the
-raw page — the LLM step happens later, worker-side. No new Cloud Run Job is added; the collector
-ships in the existing `producers/` image bake (T27), so no `Dockerfile` change is needed.
+**The orchestrator Job and the scrape collectors it spawns do NOT get either key** (K1/K4).
+This is enforced at the **IAM level**: the orchestrator runs as the separate
+`bellweather-orchestrator` SA that holds only `DATABASE_URL`'s `secretAccessor` — neither
+LLM secret is granted to it. Env-var omission alone is insufficient on Cloud Run because ADC
+is ambient via the metadata server regardless of the minimal child env; the IAM exclusion is
+the hard gate.
 
-`var.anthropic_api_key` is **optional** (defaults to `""`): the baseline applies without it, then
-the real key is dropped into the secret later (add a new secret version, or pass
-`-var anthropic_api_key=sk-ant-...`). Until set, `LlmExtractor` raises a clear `RuntimeError` and
-no scrape extraction succeeds — fetch/ingest/GDELT paths are unaffected.
-
-**Cost:** the secret itself is free; the per-call Anthropic spend is the D-b cost flag — held in
-budget by the cheap default model (Haiku) and low cadence. Cloud SQL still dominates the
+**Cost:** both secrets are free; the per-call spend is the D-b/D-c cost flag, held in budget
+by cheap default models (Haiku / Gemini Flash) and low cadence. Cloud SQL still dominates the
 `<$40/mo` envelope.
 
 ## Prerequisites

@@ -35,5 +35,12 @@ variable "anthropic_api_key" {
   type        = string
   sensitive   = true
   default     = ""
-  description = "Anthropic API key for the LLM scrape extractor (worker) + dry-run preview (api) — stored in Secret Manager. Optional: leave empty to apply the baseline, then drop the real key into the bellweather-anthropic-api-key secret later (the LLM path raises until it is set)."
+  description = "Anthropic API key for the LLM scrape extractor (worker Job only) — stored in Secret Manager. Optional: leave empty and no secret version or env mount is created (the Anthropic path raises until it is set); to enable later, set this var and re-apply."
+}
+
+variable "gemini_api_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Google AI Studio key for the Gemini extraction provider (worker Job only) — stored in Secret Manager. Optional: leave empty and no secret version or env mount is created (the Gemini path raises until it is set); to enable later, set this var and re-apply."
 }

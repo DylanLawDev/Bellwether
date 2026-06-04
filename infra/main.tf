@@ -111,6 +111,7 @@ resource "google_secret_manager_secret" "anthropic_key" {
 }
 
 resource "google_secret_manager_secret_version" "anthropic_key" {
+  count       = var.anthropic_api_key == "" ? 0 : 1
   secret      = google_secret_manager_secret.anthropic_key.id
   secret_data = var.anthropic_api_key
 }
@@ -121,6 +122,32 @@ resource "google_secret_manager_secret_version" "anthropic_key" {
 # The orchestrator SA is intentionally excluded so spawned templates cannot read it.
 resource "google_secret_manager_secret_iam_member" "anthropic_key_access" {
   secret_id = google_secret_manager_secret.anthropic_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+# --- GEMINI_API_KEY secret (Gemini LLM provider, T43/T44) ---
+# Same posture as ANTHROPIC_API_KEY: worker-only env mount, runtime SA only,
+# orchestrator SA excluded (ADC-ambient metadata server), API service never mounts
+# either LLM key (K1/K4/K10). Both keys become active only when the corresponding
+# tfvar is non-empty — the conditional baseline (count = 0 when var is empty) ensures
+# terraform apply with empty vars never creates an empty-payload secret version.
+resource "google_secret_manager_secret" "gemini_key" {
+  secret_id = "bellweather-gemini-api-key"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "gemini_key" {
+  count       = var.gemini_api_key == "" ? 0 : 1
+  secret      = google_secret_manager_secret.gemini_key.id
+  secret_data = var.gemini_api_key
+}
+
+resource "google_secret_manager_secret_iam_member" "gemini_key_access" {
+  secret_id = google_secret_manager_secret.gemini_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime.email}"
 }
@@ -242,12 +269,27 @@ resource "google_cloud_run_v2_job" "worker" {
             }
           }
         }
-        env {
-          name = "ANTHROPIC_API_KEY"
-          value_source {
-            secret_key_ref {
-              secret  = google_secret_manager_secret.anthropic_key.secret_id
-              version = "latest"
+        dynamic "env" {
+          for_each = var.anthropic_api_key == "" ? [] : [1]
+          content {
+            name = "ANTHROPIC_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.anthropic_key.secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
+        dynamic "env" {
+          for_each = var.gemini_api_key == "" ? [] : [1]
+          content {
+            name = "GEMINI_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.gemini_key.secret_id
+                version = "latest"
+              }
             }
           }
         }
@@ -260,6 +302,8 @@ resource "google_cloud_run_v2_job" "worker" {
     google_secret_manager_secret_iam_member.db_url_access,
     google_secret_manager_secret_version.anthropic_key,
     google_secret_manager_secret_iam_member.anthropic_key_access,
+    google_secret_manager_secret_version.gemini_key,
+    google_secret_manager_secret_iam_member.gemini_key_access,
   ]
 }
 
