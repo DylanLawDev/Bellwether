@@ -111,6 +111,7 @@ resource "google_secret_manager_secret" "anthropic_key" {
 }
 
 resource "google_secret_manager_secret_version" "anthropic_key" {
+  count       = local.anthropic_key_set ? 1 : 0
   secret      = google_secret_manager_secret.anthropic_key.id
   secret_data = var.anthropic_api_key
 }
@@ -125,11 +126,44 @@ resource "google_secret_manager_secret_iam_member" "anthropic_key_access" {
   member    = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+# --- GEMINI_API_KEY secret (Gemini LLM provider, T43/T44) ---
+# Same posture as ANTHROPIC_API_KEY: worker-only env mount, runtime SA only,
+# orchestrator SA excluded (ADC-ambient metadata server), API service never mounts
+# either LLM key (K1/K4/K10). Both keys become active only when the corresponding
+# tfvar is non-empty — the conditional baseline (count = 0 when var is empty) ensures
+# terraform apply with empty vars never creates an empty-payload secret version.
+resource "google_secret_manager_secret" "gemini_key" {
+  secret_id = "bellweather-gemini-api-key"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "gemini_key" {
+  count       = local.gemini_key_set ? 1 : 0
+  secret      = google_secret_manager_secret.gemini_key.id
+  secret_data = var.gemini_api_key
+}
+
+resource "google_secret_manager_secret_iam_member" "gemini_key_access" {
+  secret_id = google_secret_manager_secret.gemini_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 locals {
   common_env = {
     BELLWEATHER_BUCKET     = google_storage_bucket.bronze.name
     BELLWEATHER_OBS_BUCKET = var.obs_bucket
   }
+  # Presence flags for the optional LLM keys. The key vars are `sensitive`, so a
+  # comparison derived from them is itself sensitive — and Terraform rejects
+  # sensitive values in `count`/`for_each` (the conditional baseline below would
+  # fail to plan). `nonsensitive()` declassifies only the derived boolean (key
+  # set or not), never the key bytes, which is safe to expose in the plan.
+  anthropic_key_set = nonsensitive(var.anthropic_api_key != "")
+  gemini_key_set    = nonsensitive(var.gemini_api_key != "")
 }
 
 # --- Ingestion API + UI (Cloud Run service) ---
@@ -242,12 +276,27 @@ resource "google_cloud_run_v2_job" "worker" {
             }
           }
         }
-        env {
-          name = "ANTHROPIC_API_KEY"
-          value_source {
-            secret_key_ref {
-              secret  = google_secret_manager_secret.anthropic_key.secret_id
-              version = "latest"
+        dynamic "env" {
+          for_each = local.anthropic_key_set ? [1] : []
+          content {
+            name = "ANTHROPIC_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.anthropic_key.secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
+        dynamic "env" {
+          for_each = local.gemini_key_set ? [1] : []
+          content {
+            name = "GEMINI_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.gemini_key.secret_id
+                version = "latest"
+              }
             }
           }
         }
@@ -260,6 +309,8 @@ resource "google_cloud_run_v2_job" "worker" {
     google_secret_manager_secret_iam_member.db_url_access,
     google_secret_manager_secret_version.anthropic_key,
     google_secret_manager_secret_iam_member.anthropic_key_access,
+    google_secret_manager_secret_version.gemini_key,
+    google_secret_manager_secret_iam_member.gemini_key_access,
   ]
 }
 
