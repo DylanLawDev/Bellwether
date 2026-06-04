@@ -111,7 +111,7 @@ resource "google_secret_manager_secret" "anthropic_key" {
 }
 
 resource "google_secret_manager_secret_version" "anthropic_key" {
-  count       = var.anthropic_api_key == "" ? 0 : 1
+  count       = local.anthropic_key_set ? 1 : 0
   secret      = google_secret_manager_secret.anthropic_key.id
   secret_data = var.anthropic_api_key
 }
@@ -141,7 +141,7 @@ resource "google_secret_manager_secret" "gemini_key" {
 }
 
 resource "google_secret_manager_secret_version" "gemini_key" {
-  count       = var.gemini_api_key == "" ? 0 : 1
+  count       = local.gemini_key_set ? 1 : 0
   secret      = google_secret_manager_secret.gemini_key.id
   secret_data = var.gemini_api_key
 }
@@ -157,6 +157,13 @@ locals {
     BELLWEATHER_BUCKET     = google_storage_bucket.bronze.name
     BELLWEATHER_OBS_BUCKET = var.obs_bucket
   }
+  # Presence flags for the optional LLM keys. The key vars are `sensitive`, so a
+  # comparison derived from them is itself sensitive — and Terraform rejects
+  # sensitive values in `count`/`for_each` (the conditional baseline below would
+  # fail to plan). `nonsensitive()` declassifies only the derived boolean (key
+  # set or not), never the key bytes, which is safe to expose in the plan.
+  anthropic_key_set = nonsensitive(var.anthropic_api_key != "")
+  gemini_key_set    = nonsensitive(var.gemini_api_key != "")
 }
 
 # --- Ingestion API + UI (Cloud Run service) ---
@@ -270,7 +277,7 @@ resource "google_cloud_run_v2_job" "worker" {
           }
         }
         dynamic "env" {
-          for_each = var.anthropic_api_key == "" ? [] : [1]
+          for_each = local.anthropic_key_set ? [1] : []
           content {
             name = "ANTHROPIC_API_KEY"
             value_source {
@@ -282,7 +289,7 @@ resource "google_cloud_run_v2_job" "worker" {
           }
         }
         dynamic "env" {
-          for_each = var.gemini_api_key == "" ? [] : [1]
+          for_each = local.gemini_key_set ? [1] : []
           content {
             name = "GEMINI_API_KEY"
             value_source {
