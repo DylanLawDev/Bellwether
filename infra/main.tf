@@ -110,6 +110,15 @@ resource "google_secret_manager_secret" "anthropic_key" {
   depends_on = [google_project_service.apis]
 }
 
+# Created only when the key is supplied (Gemini design D5) — Secret Manager
+# rejects an empty payload, and an unconditional version made the documented
+# "leave anthropic_api_key empty to apply the baseline" promise fail partway:
+# the 2026-06-03 apply errored here and skipped the worker Job + its scheduler
+# via depends_on, which broke CI's `gcloud run jobs update`. The tfvar is the
+# source of truth: enabling the key later means setting the var and re-applying
+# (which creates the version AND mounts the env on the worker), not hand-adding
+# a secret version. Unset, the LLM path raises a clear RuntimeError; the rest
+# of the worker is unaffected.
 resource "google_secret_manager_secret_version" "anthropic_key" {
   count       = local.anthropic_key_set ? 1 : 0
   secret      = google_secret_manager_secret.anthropic_key.id
@@ -276,6 +285,9 @@ resource "google_cloud_run_v2_job" "worker" {
             }
           }
         }
+        # Mounted only when the key is supplied (D5): Cloud Run resolves secret
+        # env refs at instance start, so mounting a versionless secret would
+        # fail EVERY worker execution — not just the LLM path.
         dynamic "env" {
           for_each = local.anthropic_key_set ? [1] : []
           content {
